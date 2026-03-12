@@ -130,7 +130,11 @@ with st.sidebar:
     # ── 数据集根目录 ──
     st.markdown("**📁 数据集根目录**")
     dataset_root = st.text_input(
+<<<<<<< HEAD
         "few-shot 数据集根路径 (如 VoxCeleb/5shot3way)",
+=======
+        "few-shot 数据集根路径 (如 xz-data/5shot3way)",
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
         value=st.session_state["dataset_root"],
         key="_dr",
     )
@@ -170,10 +174,17 @@ with st.sidebar:
 # ──────────────────────────────────────────────
 
 st.markdown('<h1 class="main-title">🔊 开放集说话人识别系统</h1>', unsafe_allow_html=True)
+<<<<<<< HEAD
     st.markdown(
         "基于 **原型网络 + 加性Softmax + 熵正则化** 的小样本说话人验证 | "
         "数据集: **VoxCeleb (VoxCeleb1+2)** | 特征提取: **ERes2NetV2** (3D-Speaker)"
     )
+=======
+st.markdown(
+    "基于 **原型网络 + 加性Softmax + 熵正则化** 的小样本说话人验证 | "
+    "数据集: **VoxCeleb / XZ-Data** | 特征提取: **ERes2NetV2** (3D-Speaker)"
+)
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
 st.markdown('<hr style="margin:8px 0 16px">', unsafe_allow_html=True)
 
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -201,17 +212,29 @@ with tab1:
         st.markdown("#### 1.1 数据集构建参数")
         meta_dir = st.text_input("meta 目录 (CSV 文件所在路径)", 
                                   value=st.session_state["meta_dir"],
+<<<<<<< HEAD
                                   placeholder="/data/voxceleb/meta")
+=======
+                                  placeholder="/data/xz-data/meta")
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
         st.session_state["meta_dir"] = meta_dir
 
         audio_dir = st.text_input("audio 目录 (WAV 文件所在路径)",
                                    value=st.session_state["audio_dir"],
+<<<<<<< HEAD
                                    placeholder="/data/voxceleb/audio")
+=======
+                                   placeholder="/data/xz-data/audio")
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
         st.session_state["audio_dir"] = audio_dir
 
         output_base = st.text_input("输出目录 (few-shot 数据集根目录)",
                                      value=st.session_state["output_base"] or dataset_root,
+<<<<<<< HEAD
                                      placeholder="/data/voxceleb/5shot3way")
+=======
+                                     placeholder="/data/xz-data/5shot3way")
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
         st.session_state["output_base"] = output_base
 
         # CSV 文件选择
@@ -264,11 +287,19 @@ with tab1:
                         src = script_path.read_text()
                         # 替换配置变量
                         src = src.replace(
+<<<<<<< HEAD
                             'meta_dir = "/data/voxceleb/meta"', f'meta_dir = "{meta_dir}"'
                         ).replace(
                             'audio_dir = "/data/voxceleb/audio"', f'audio_dir = "{audio_dir}"'
                         ).replace(
                             'output_base = "/data/voxceleb/5shot3way"', f'output_base = "{output_base}"'
+=======
+                            'meta_dir = "/data/xz-data/meta"', f'meta_dir = "{meta_dir}"'
+                        ).replace(
+                            'audio_dir = "/data/xz-data/audio"', f'audio_dir = "{audio_dir}"'
+                        ).replace(
+                            'output_base = "/data/xz-data/5shot3way"', f'output_base = "{output_base}"'
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
                         )
                         # 替换 CSV 列表
                         csv_list_str = str(selected_csvs)
@@ -898,4 +929,8 @@ st.markdown(
     "基于小样本学习的开放集说话人识别系统 · 叶重 (3122005057) · 指导教师: 胡宇 · 2026"
     "</div>",
     unsafe_allow_html=True,
+<<<<<<< HEAD
 )
+=======
+)
+>>>>>>> 83d79f0425aa3c6a50bf8ca592f34ea6ef09f29c
