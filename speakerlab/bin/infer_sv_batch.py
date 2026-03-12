@@ -316,6 +316,7 @@ def main_process(rank, nprocs, args, wav_list, embedding_model):
 
                 if args.feat_out_format == 'npy':
                     save_path = args.feat_out_dir / f'{wav_id}.npy'
+                    save_path.parent.mkdir(exist_ok=True, parents=True)
                     if os.path.exists(save_path):
                         print(f'[WARNING]: {save_path} already exists. Overwrite it.')
                     np.save(save_path, wav_embedding)
@@ -363,7 +364,9 @@ class IterWavList(IterableDataset):
             except:
                 print(f'[WARNING]: Error reading {data_path}, please check.')
                 continue
-            wav_id = os.path.basename(data_path).rsplit('.', 1)[0]
+            wav_id = os.path.splitext(os.path.normpath(data_path))[0]
+            while wav_id.startswith('./'):
+                wav_id = wav_id[2:]
             feats = []
             for wav in wavs:
                 feats.append(self.feature_extractor(wav))

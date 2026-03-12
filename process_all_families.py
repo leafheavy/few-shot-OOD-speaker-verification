@@ -5,6 +5,13 @@ import argparse
 from pathlib import Path
 from tqdm import tqdm
 
+def _count_non_empty_lines(path: Path) -> int:
+    with path.open("r", encoding="utf-8") as f:
+        return sum(1 for line in f if line.strip())
+
+def _count_npy_files(path: Path) -> int:
+    return sum(1 for _ in path.rglob("*.npy"))
+
 def process_family_wav_lists(dataset_root, model_id, script_path):
     """
     自动处理所有Family文件夹中的train和test WAV列表
@@ -40,6 +47,9 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
         train_output_dir.mkdir(parents=True, exist_ok=True)
         test_output_dir.mkdir(parents=True, exist_ok=True)
         
+        train_expected = _count_non_empty_lines(train_list)
+        test_expected = _count_non_empty_lines(test_list)
+
         # 处理train列表
         # print(f"处理 {family.name} 的train列表...")
         cmd_train = [
@@ -54,7 +64,12 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             # 设置工作目录为数据集根目录，确保相对路径正确解析
             subprocess.run(cmd_train, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的train列表")
-        except subprocess.CalledProcessError as e:
+            test_actual = _count_npy_files(test_output_dir)
+            if test_actual < test_expected:
+                raise RuntimeError(
+                    f"{family.name} test embedding数量不足: expected={test_expected}, actual={test_actual}"
+                )
+        except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的train列表时出错: {e}")
             continue
         
@@ -72,7 +87,12 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             # 设置工作目录为数据集根目录，确保相对路径正确解析
             subprocess.run(cmd_test, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的test列表")
-        except subprocess.CalledProcessError as e:
+            train_actual = _count_npy_files(train_output_dir)
+            if train_actual < train_expected:
+                raise RuntimeError(
+                    f"{family.name} train embedding数量不足: expected={train_expected}, actual={train_actual}"
+                )
+        except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的test列表时出错: {e}")
             continue
     
