@@ -64,10 +64,10 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             # 设置工作目录为数据集根目录，确保相对路径正确解析
             subprocess.run(cmd_train, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的train列表")
-            test_actual = _count_npy_files(test_output_dir)
-            if test_actual < test_expected:
+            train_actual = _count_npy_files(train_output_dir)
+            if train_actual < train_expected:
                 raise RuntimeError(
-                    f"{family.name} test embedding数量不足: expected={test_expected}, actual={test_actual}"
+                    f"{family.name} train embedding数量不足: expected={train_expected}, actual={train_actual}"
                 )
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的train列表时出错: {e}")
@@ -87,10 +87,10 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             # 设置工作目录为数据集根目录，确保相对路径正确解析
             subprocess.run(cmd_test, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的test列表")
-            train_actual = _count_npy_files(train_output_dir)
-            if train_actual < train_expected:
+            test_actual = _count_npy_files(test_output_dir)
+            if test_actual < test_expected:
                 raise RuntimeError(
-                    f"{family.name} train embedding数量不足: expected={train_expected}, actual={train_actual}"
+                    f"{family.name} test embedding数量不足: expected={test_expected}, actual={test_actual}"
                 )
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的test列表时出错: {e}")
