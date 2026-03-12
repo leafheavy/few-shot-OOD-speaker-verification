@@ -207,7 +207,7 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
 # 使用示例
 if __name__ == "__main__":
     # 存储小样本的 embedding 的文件夹
-    dataset_root = Path('/data/xz-data/5shot3way')
+    dataset_root = Path('/Dataset/Voxceleb1/voxceleb1_5shot3way')
     
     # 为每个family创建独立的DataLoader
     support_loaders, test_loaders = create_dataloaders_for_families(dataset_root, batch_size=8, preload=True)
