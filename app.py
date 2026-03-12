@@ -245,40 +245,36 @@ with tab1:
                     if not script_path.exists():
                         st.error(f"未找到 few_shot_dataset_construction.py 于 {user_code_dir}")
                     else:
-                        src = script_path.read_text(encoding="utf-8")
-                        # 替换配置变量
-                        src = src.replace(
-                            'SOURCE_ROOT = r"E:/benchmark/audio/voxceleb1"',
-                            f'SOURCE_ROOT = r"{source_root}"',
-                        ).replace(
-                            'OUTPUT_ROOT = r"E:/benchmark/audio/voxceleb1_few_shot"',
-                            f'OUTPUT_ROOT = r"{output_base}"',
-                        ).replace(
-                            'family_size=5', f'family_size={speakers_per_family}',
-                        ).replace(
-                            'train_samples_per_member=3', f'train_samples_per_member={shot_num}',
-                        )
-
                         from utils.subprocess_runner import LiveProcessRunner
 
-                        with tempfile.NamedTemporaryFile(
-                            mode="w", suffix=".py", delete=False, dir=user_code_dir, encoding="utf-8"
-                        ) as tmpf:
-                            tmpf.write(src)
-                            patched_script = tmpf.name
+                        inline_runner = (
+                            "from few_shot_dataset_construction import construct_few_shot_dataset\n"
+                            "import sys\n"
+                            "source_root, output_root, family_size, train_samples = sys.argv[1], sys.argv[2], int(sys.argv[3]), int(sys.argv[4])\n"
+                            "construct_few_shot_dataset(source_root=source_root, output_root=output_root, "
+                            "family_size=family_size, train_samples_per_member=train_samples)\n"
+                        )
 
-                        try:
-                            runner = LiveProcessRunner([sys.executable, patched_script], cwd=user_code_dir)
-                            runner.start()
-                            prog = st.progress(0, "构建数据集...")
-                            for i, line in enumerate(runner.iter_output()):
-                                st.session_state["step1_log"].append(line)
-                                prog.progress(min((i + 1) * 0.02, 0.95))
-                                refresh_log1()
-                            rc = runner.wait()
-                            prog.progress(1.0)
-                        finally:
-                            Path(patched_script).unlink(missing_ok=True)
+                        runner = LiveProcessRunner(
+                            [
+                                sys.executable,
+                                "-c",
+                                inline_runner,
+                                source_root,
+                                output_base,
+                                str(speakers_per_family),
+                                str(shot_num),
+                            ],
+                            cwd=user_code_dir,
+                        )
+                        runner.start()
+                        prog = st.progress(0, "构建数据集...")
+                        for i, line in enumerate(runner.iter_output()):
+                            st.session_state["step1_log"].append(line)
+                            prog.progress(min((i + 1) * 0.02, 0.95))
+                            refresh_log1()
+                        rc = runner.wait()
+                        prog.progress(1.0)
 
                         if rc == 0:
                             st.session_state["step1_log"].append("[系统] ✅ 数据集构建完成!")
