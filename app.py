@@ -436,7 +436,7 @@ with tab2:
                 for i, line in enumerate(runner.iter_output()):
                     log_lines.append(line)
                     ext_log_box.markdown(
-                        f'<pre class="log-box">{"chr(10)".join(log_lines[-40:])}</pre>',
+                        f'<pre class="log-box">{chr(10).join(log_lines[-40:])}</pre>',
                         unsafe_allow_html=True
                     )
                     pbar.progress(min((i + 1) * 0.005, 0.95))

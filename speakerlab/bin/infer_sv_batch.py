@@ -364,6 +364,8 @@ class IterWavList(IterableDataset):
             except:
                 print(f'[WARNING]: Error reading {data_path}, please check.')
                 continue
+            # Keep relative path in id to avoid collisions for repeated
+            # basenames like "00001.wav" under different speaker folders.
             wav_id = os.path.splitext(os.path.normpath(data_path))[0]
             while wav_id.startswith('./'):
                 wav_id = wav_id[2:]

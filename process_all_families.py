@@ -50,6 +50,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
         train_expected = _count_non_empty_lines(train_list)
         test_expected = _count_non_empty_lines(test_list)
 
+        print(f"[{family.name}] 开始提取: train={train_expected}, test={test_expected}", flush=True)
+
         # 处理train列表
         # print(f"处理 {family.name} 的train列表...")
         cmd_train = [
@@ -57,7 +59,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             "--model_id", model_id,
             "--wavs", str(train_list),
             "--feat_out_dir", str(train_output_dir),
-            "--feat_out_format", "npy"
+            "--feat_out_format", "npy",
+            "--diable_progress_bar"
         ]
         
         try:
@@ -69,6 +72,7 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
                 raise RuntimeError(
                     f"{family.name} train embedding数量不足: expected={train_expected}, actual={train_actual}"
                 )
+            print(f"[{family.name}] train完成: {train_actual}/{train_expected}", flush=True)
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的train列表时出错: {e}")
             continue
@@ -80,7 +84,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             "--model_id", model_id,
             "--wavs", str(test_list),
             "--feat_out_dir", str(test_output_dir),
-            "--feat_out_format", "npy"
+            "--feat_out_format", "npy",
+            "--diable_progress_bar"
         ]
         
         try:
@@ -92,6 +97,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
                 raise RuntimeError(
                     f"{family.name} test embedding数量不足: expected={test_expected}, actual={test_actual}"
                 )
+            print(f"[{family.name}] test完成: {test_actual}/{test_expected}", flush=True)
+            print(f"[{family.name}] 全部完成", flush=True)
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的test列表时出错: {e}")
             continue
