@@ -1,0 +1,99 @@
+import os
+import warnings
+import subprocess
+import argparse
+from pathlib import Path
+from tqdm import tqdm
+
+def process_family_wav_lists(dataset_root, model_id, script_path):
+    """
+    自动处理所有Family文件夹中的train和test WAV列表
+    
+    Args:
+        dataset_root: 数据集根路径
+        model_id: 使用的模型ID
+        script_path: infer_sv_batch.py脚本的路径
+    """
+    # 忽略Python警告
+    warnings.filterwarnings("ignore")
+
+    dataset_root = Path(dataset_root)
+    families = [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")]
+    
+    print(f"找到 {len(families)} 个Family文件夹")
+    
+    # 获取脚本的绝对路径
+    script_path = Path(script_path).resolve()
+    
+    for family in tqdm(families, desc="处理Family"):
+        # 检查是否存在WAV列表文件
+        train_list = family / "train_wav_list.txt"
+        test_list = family / "test_wav_list.txt"
+        
+        if not train_list.exists() or not test_list.exists():
+            print(f"警告: {family.name} 缺少WAV列表文件，跳过...")
+            continue
+        
+        # 创建输出目录
+        train_output_dir = family / "embedding" / "train"
+        test_output_dir = family / "embedding" / "test"
+        train_output_dir.mkdir(parents=True, exist_ok=True)
+        test_output_dir.mkdir(parents=True, exist_ok=True)
+        
+        # 处理train列表
+        # print(f"处理 {family.name} 的train列表...")
+        cmd_train = [
+            "python", str(script_path),
+            "--model_id", model_id,
+            "--wavs", str(train_list),
+            "--feat_out_dir", str(train_output_dir),
+            "--feat_out_format", "npy"
+        ]
+        
+        try:
+            # 设置工作目录为数据集根目录，确保相对路径正确解析
+            subprocess.run(cmd_train, check=True, cwd=str(dataset_root))
+            # print(f"成功处理 {family.name} 的train列表")
+        except subprocess.CalledProcessError as e:
+            print(f"处理 {family.name} 的train列表时出错: {e}")
+            continue
+        
+        # 处理test列表
+        # print(f"处理 {family.name} 的test列表...")
+        cmd_test = [
+            "python", str(script_path),
+            "--model_id", model_id,
+            "--wavs", str(test_list),
+            "--feat_out_dir", str(test_output_dir),
+            "--feat_out_format", "npy"
+        ]
+        
+        try:
+            # 设置工作目录为数据集根目录，确保相对路径正确解析
+            subprocess.run(cmd_test, check=True, cwd=str(dataset_root))
+            # print(f"成功处理 {family.name} 的test列表")
+        except subprocess.CalledProcessError as e:
+            print(f"处理 {family.name} 的test列表时出错: {e}")
+            continue
+    
+    print("所有Family处理完成!")
+
+def main():
+    parser = argparse.ArgumentParser(description='自动处理所有Family的WAV列表进行特征提取')
+    parser.add_argument('--dataset_root', required=True, help='数据集根路径')
+    parser.add_argument('--model_id', default='iic/speech_eres2netv2_sv_zh-cn_16k-common', 
+                       help='使用的模型ID')
+    parser.add_argument('--script_path', default='/home/ps/3D-Speaker/speakerlab/bin/infer_sv_batch.py', 
+                       help='infer_sv_batch.py脚本的路径')
+    
+    args = parser.parse_args()
+    
+    # 执行处理
+    process_family_wav_lists(
+        dataset_root=args.dataset_root,
+        model_id=args.model_id,
+        script_path=args.script_path
+    )
+
+if __name__ == "__main__":
+    main()

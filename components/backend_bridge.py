@@ -1,0 +1,323 @@
+"""
+backend_bridge.py — 与用户现有代码的兼容层
+将 few_shot_learning.py / baseline.py / dataloader.py 等统一封装为前端可调用的 API
+
+所有 torch / 用户模块均延迟导入，保证在没有 GPU 的机器上前端仍能正常启动。
+"""
+
+from __future__ import annotations
+
+import sys
+import importlib
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+
+# ── torch 延迟导入 ──────────────────────────────
+try:
+    import torch
+    import torch.nn.functional as F
+    _TORCH_AVAILABLE = True
+except ImportError:
+    _TORCH_AVAILABLE = False
+    torch = None   # type: ignore
+    F     = None   # type: ignore
+
+
+# ════════════════════════════════════════════════
+# 工具函数
+# ════════════════════════════════════════════════
+
+def _ensure_path(directory: str) -> None:
+    """把目录加入 sys.path（幂等）"""
+    resolved = str(Path(directory).resolve())
+    if resolved not in sys.path:
+        sys.path.insert(0, resolved)
+
+
+def _inject_calculate_eer_shim(directory: str) -> None:
+    """
+    如果目录里没有 calculate_eer.py，自动写入一份最简实现，
+    防止 few_shot_learning.py 等模块 import 时抛 ImportError。
+    已有真实文件时直接跳过，不覆盖。
+    """
+    target = Path(directory) / "calculate_eer.py"
+    if target.exists():
+        return
+    shim = (
+        "import numpy as np\n\n"
+        "def calculate_eer(scores, labels):\n"
+        "    scores = np.asarray(scores, dtype=float)\n"
+        "    labels = np.asarray(labels, dtype=int)\n"
+        "    thresholds = np.sort(np.unique(scores))[::-1]\n"
+        "    n_pos, n_neg = np.sum(labels==1), np.sum(labels==0)\n"
+        "    if n_pos==0 or n_neg==0: return 0.0, 0.0\n"
+        "    frrs, fars = [], []\n"
+        "    for t in thresholds:\n"
+        "        p = scores >= t\n"
+        "        tp = np.sum(p & (labels==1)); fp = np.sum(p & (labels==0))\n"
+        "        fn = np.sum(~p & (labels==1)); tn = np.sum(~p & (labels==0))\n"
+        "        frrs.append(fn / max(fn+tp, 1)); fars.append(fp / max(fp+tn, 1))\n"
+        "    frrs, fars = np.array(frrs), np.array(fars)\n"
+        "    idx = np.argmin(np.abs(frrs - fars))\n"
+        "    return float((frrs[idx]+fars[idx])/2), float(thresholds[idx])\n"
+    )
+    target.write_text(shim, encoding="utf-8")
+
+
+# ════════════════════════════════════════════════
+# 核心公开函数：导入用户模块
+# ════════════════════════════════════════════════
+
+def import_user_modules(user_code_dir: str) -> Dict[str, object]:
+    """
+    将 user_code_dir 加入 sys.path，然后逐一 import 用户后端脚本。
+
+    Args:
+        user_code_dir: 含有 few_shot_learning.py、baseline.py 等文件的目录。
+
+    Returns:
+        dict，键为模块名，值为已导入的模块对象；导入失败则值为 None。
+    """
+    _ensure_path(user_code_dir)
+    _inject_calculate_eer_shim(user_code_dir)
+
+    standard_modules = [
+        "dataloader",
+        "dataloader_OOD",
+        "baseline",
+        "few_shot_learning",
+    ]
+    optional_modules = [
+        "few_shot_learning_OOD_other_loss_xz",   # 依赖 loss_functions.py
+    ]
+
+    result: Dict[str, object] = {}
+
+    for name in standard_modules:
+        try:
+            if name in sys.modules:
+                mod = importlib.reload(sys.modules[name])
+            else:
+                mod = importlib.import_module(name)
+            result[name] = mod
+        except Exception as exc:
+            result[name] = None
+            print(f"[bridge] ⚠  无法导入 '{name}': {exc}")
+
+    for name in optional_modules:
+        try:
+            if name in sys.modules:
+                mod = importlib.reload(sys.modules[name])
+            else:
+                mod = importlib.import_module(name)
+            result[name] = mod
+        except Exception as exc:
+            result[name] = None
+            print(f"[bridge] ⚠  可选模块 '{name}' 不可用: {exc}")
+
+    return result
+
+
+# ════════════════════════════════════════════════
+# DataLoader 工厂
+# ════════════════════════════════════════════════
+
+def create_family_loaders(
+    dataset_root: str,
+    modules: Dict,
+    mode: str = "standard",
+    batch_size: int = 8,
+    preload: bool = True,
+) -> Tuple:
+    """
+    根据运行模式选择对应的 dataloader 模块并创建 DataLoader。
+
+    Returns:
+        (support_loaders, test_loaders)  两个以 family 名为键的字典
+    """
+    root = Path(dataset_root)
+
+    if mode == "ood":
+        mod = modules.get("dataloader_OOD") or modules.get("dataloader")
+    else:
+        mod = modules.get("dataloader")
+
+    if mod is None:
+        raise ImportError(
+            "dataloader 模块未能加载。\n"
+            "请确认侧边栏「用户代码目录」指向包含 dataloader.py 的文件夹，"
+            "并点击「加载用户代码模块」。"
+        )
+
+    return mod.create_dataloaders_for_families(
+        root, batch_size=batch_size, preload=preload
+    )
+
+
+# ════════════════════════════════════════════════
+# 少样本学习运行器
+# ════════════════════════════════════════════════
+
+class FewShotRunner:
+    """
+    统一封装三种模式：
+      'baseline'  — InnerProductCalculator（余弦相似度，无梯度更新）
+      'standard'  — FewShotLearning（原型网络 + 熵正则化）
+      'ood'       — FewShotLearning OOD 版（ArcFace/CosFace + 开放集检测）
+    """
+
+    def __init__(self, modules: Dict, mode: str = "standard"):
+        self.modules = modules
+        self.mode    = mode
+        self._model  = None
+        self._init_model()
+
+    def _init_model(self) -> None:
+        if self.mode == "baseline":
+            mod = self.modules.get("baseline")
+            if mod:
+                self._model = mod.InnerProductCalculator(metric="cosine")
+
+        elif self.mode == "standard":
+            mod = self.modules.get("few_shot_learning")
+            if mod:
+                self._model = mod.FewShotLearning()
+
+        elif self.mode == "ood":
+            mod = self.modules.get("few_shot_learning_OOD_other_loss_xz")
+            if mod:
+                self._model = mod.FewShotLearning()
+            else:
+                # 回退到 standard
+                mod = self.modules.get("few_shot_learning")
+                if mod:
+                    self._model = mod.FewShotLearning()
+                    self.mode = "standard"
+
+    def is_available(self) -> bool:
+        return self._model is not None
+
+    # ── 核心评估函数 ────────────────────────────
+
+    def run_family(
+        self,
+        support_loader,
+        test_loader,
+        epochs: int = 100,
+        lr: float = 1e-3,
+        ood_threshold: float = 0.4,
+    ) -> Dict:
+        """
+        对单个 family 执行「初始化 → 学习 → 推理 → 指标计算」完整流程。
+
+        Returns:
+            包含 err_rate / eer / similarity_matrix / true_labels /
+            prediction 等字段的字典；OOD 模式额外含 auroc / fpr_at_95 等。
+        """
+        if not _TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch 未安装，无法运行模型评估。")
+
+        from utils.metrics import calculate_eer, calculate_ood_metrics
+
+        m = self._model
+
+        # 1. 初始化原型
+        if self.mode == "baseline":
+            m.build_W_matrix(support_loader)
+        else:
+            m.initialization(support_loader)
+
+        # 2. 梯度更新（baseline 跳过）
+        if self.mode != "baseline":
+            m.learning(support_loader, Epochs=epochs, lr=lr)
+
+        # 3. 推理
+        if self.mode == "baseline":
+            raw = m.compute_inner_products(test_loader)
+        else:
+            raw = m.calculate_result(test_loader)
+
+        sim_mat     = raw["similarity_matrix"]   # Tensor [N, C]
+        true_labels = raw["true_labels"]          # Tensor [N]
+        pred        = raw["prediction"]           # Tensor [N]
+
+        # 4. 分类错误率（仅计 in-domain）
+        id_mask = true_labels >= 0
+        if torch.any(id_mask):
+            err_num  = int(torch.count_nonzero(pred[id_mask] - true_labels[id_mask]).item())
+            test_num = int(id_mask.sum().item())
+            err_rate = err_num / test_num * 100
+        else:
+            err_num = test_num = 0
+            err_rate = 0.0
+
+        # 5. EER
+        eer_scores: List[float] = []
+        eer_labs:   List[int]   = []
+        for i_t in torch.where(id_mask)[0]:
+            i  = int(i_t.item())
+            ts = int(true_labels[i].item())
+            if ts >= sim_mat.shape[1]:
+                continue
+            eer_scores.append(float(sim_mat[i, ts].item()))
+            eer_labs.append(1)
+            others = [j for j in range(sim_mat.shape[1]) if j != ts]
+            if others:
+                eer_scores.append(float(torch.max(sim_mat[i, torch.tensor(others)]).item()))
+                eer_labs.append(0)
+
+        if eer_scores:
+            eer, eer_thr = calculate_eer(np.array(eer_scores), np.array(eer_labs))
+        else:
+            eer, eer_thr = 0.0, 0.0
+
+        result = {
+            "err_rate"         : err_rate,
+            "err_num"          : err_num,
+            "test_num"         : test_num,
+            "eer"              : eer,
+            "eer_threshold"    : eer_thr,
+            "similarity_matrix": sim_mat,
+            "true_labels"      : true_labels,
+            "prediction"       : pred,
+        }
+
+        # 6. OOD 指标
+        if self.mode == "ood":
+            ood_mask     = ~id_mask
+            confidence   = torch.max(torch.softmax(sim_mat, dim=1), dim=1)[0].detach().numpy()
+            ood_label_np = id_mask.numpy().astype(int)
+
+            if torch.any(ood_mask):
+                ood_m = calculate_ood_metrics(confidence, ood_label_np)
+
+                id_conf = confidence[id_mask.numpy()]
+                id_fr   = int(np.sum(id_conf < ood_threshold))
+
+                ood_conf     = confidence[ood_mask.numpy()]
+                ood_err_num  = int(np.sum(ood_conf >= ood_threshold))
+                ood_test_num = int(ood_mask.sum())
+
+                result.update({
+                    "id_false_reject_rate": id_fr / max(int(id_mask.sum()), 1) * 100,
+                    "id_class_err_rate"   : err_rate,
+                    "ood_err_rate"        : ood_err_num / max(ood_test_num, 1) * 100,
+                    **ood_m,
+                })
+
+        return result
+
+
+# ════════════════════════════════════════════════
+# 嵌入收集（UMAP 可视化辅助）
+# ════════════════════════════════════════════════
+
+def collect_embeddings_from_loader(loader) -> Tuple[np.ndarray, np.ndarray]:
+    """从 DataLoader 收集全部嵌入向量和标签，返回 numpy 数组。"""
+    all_embs, all_labels = [], []
+    for embs, labels, _, _ in loader:
+        all_embs.append(embs.numpy())
+        all_labels.append(labels.numpy())
+    return np.vstack(all_embs), np.concatenate(all_labels)
