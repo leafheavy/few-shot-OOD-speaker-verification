@@ -46,7 +46,6 @@ class FewShotLearning:
     def __init__(self, device):
         """
         小样本学习器
-
         """
         self.classifier = None
         self.W = None  # 支撑集嵌入矩阵 [num_support, embedding_dim]
@@ -54,6 +53,8 @@ class FewShotLearning:
         self.support_labels = None
         self.support_speaker_ids = None
         self.num_classes = 0 # 支持集中的类别数
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = device  # 保存设备信息
     
     # 1.Good Initialization for Few-Shot Learning

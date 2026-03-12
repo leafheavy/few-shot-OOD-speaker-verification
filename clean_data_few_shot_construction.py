@@ -4,9 +4,9 @@ import shutil
 from collections import defaultdict
 
 # 配置路径
-meta_dir = "/data/xz-data/meta"
-audio_dir = "/data/xz-data/audio"
-output_base = "/data/xz-data/5shot3way_clean_data"
+meta_dir = "/data/voxceleb/meta"
+audio_dir = "/data/voxceleb/audio"
+output_base = "/data/voxceleb/5shot3way_clean_data"
 
 # 配置文件
 csv_file = "clean_data.csv"  # 修正变量名
