@@ -193,7 +193,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 with tab1:
     st.subheader("🏗️ Step 1 · Few-Shot 数据集构建")
     st.markdown("""
-    执行 **`xz_data_few_shot_construction.py`** 将 VoxCeleb 原始音频按 family 组织，
+    执行 **`few_shot_dataset_construction.py`** 将 VoxCeleb 原始音频按 family 组织，
     再执行 **`generate_wav_list.py`** 为每个 family 生成 WAV 列表文件。
     """)
 
@@ -255,9 +255,9 @@ with tab1:
 
                 # ── 调用构建脚本（通过命令行参数注入配置） ──
                 try:
-                    script_path = Path(user_code_dir) / "xz_data_few_shot_construction.py"
+                    script_path = Path(user_code_dir) / "few_shot_dataset_construction.py"
                     if not script_path.exists():
-                        st.error(f"未找到 xz_data_few_shot_construction.py 于 {user_code_dir}")
+                        st.error(f"未找到 few_shot_dataset_construction.py 于 {user_code_dir}")
                     else:
                         src = script_path.read_text()
                         # 替换配置变量

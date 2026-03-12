@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import roc_auc_score, roc_curve
 
-from xz_dataloader_OOD import SpeakerEmbeddingDataset, create_dataloaders_for_families
+from dataloader_OOD import SpeakerEmbeddingDataset, create_dataloaders_for_families
 from torch.utils.data import DataLoader
 from pathlib import Path
 
@@ -43,7 +43,7 @@ class CosineClassifier(nn.Module):
         return output
 
 class FewShotLearning:
-    def __init__(self, device):
+    def __init__(self, device=None):
         """
         小样本学习器
         """

@@ -1,22 +1,34 @@
-import torch
-from torch.utils.data import Dataset, DataLoader, ConcatDataset
+import logging
+import re
 from pathlib import Path
 import numpy as np
-import logging
-import os
+import torch
+from torch.utils.data import ConcatDataset, DataLoader, Dataset
 
 # 设置日志
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+VOX_SPK_PATTERN = re.compile(r"(id\d+)", re.IGNORECASE)
+
+def infer_speaker_id(file_path: Path) -> str:
+    """从 embedding 文件名中推断说话人 ID，优先匹配 VoxCeleb 的 idXXXXX 格式。"""
+    stem = file_path.stem
+    m = VOX_SPK_PATTERN.search(stem)
+    if m:
+        return m.group(1)
+    if '_' in stem:
+        return stem.rsplit('_', 1)[0]
+    return stem
+
 class SpeakerEmbeddingDataset(Dataset):
     def __init__(self, data_dir, split='train', preload=False, ood_flag=False):
         """
         Args:
-            data_dir: 数据集根目录 (如 /Dataset/Voxceleb1/voxceleb1_5shot3way/family_name)
+            data_dir: family 目录路径data_dir: family 目录路径
             split: 'train' 或 'test'
             preload: 是否预加载嵌入到内存中
-            ood_flag: 是否为OOD数据集
+            ood_flag: 是否为OOD数据集 (OOD 样本标签固定为-1)
         """
         self.data_dir = Path(data_dir)
         self.split_dir = self.data_dir / 'embedding' / split
@@ -27,10 +39,8 @@ class SpeakerEmbeddingDataset(Dataset):
         if not self.split_dir.exists():
             raise ValueError(f"Directory {self.split_dir} does not exist")
         
-        # 收集所有embedding文件路径
-        self.file_paths = list(self.split_dir.glob('*.npy'))
-        
-        # 检查是否有任何嵌入文件
+        self.file_paths = sorted(self.split_dir.glob('*.npy'))
+
         if not self.file_paths:
             logger.warning(f"No embedding files found in {self.split_dir}")
             self.empty = True
@@ -38,14 +48,8 @@ class SpeakerEmbeddingDataset(Dataset):
         
         self.empty = False
         
-        # 从文件名中提取speaker ID
-        self.speaker_ids = []
-        for file_path in self.file_paths:
-            # 假设文件名格式为 "speaker_id_xxx.npy"
-            speaker_id = file_path.stem.split('_')[0]
-            self.speaker_ids.append(speaker_id)
-        
         # 创建speaker到label的映射
+        self.speaker_ids = [infer_speaker_id(path) for path in self.file_paths]
         unique_speakers = sorted(set(self.speaker_ids))
         self.speaker_to_label = {speaker: idx for idx, speaker in enumerate(unique_speakers)}
         
@@ -53,17 +57,27 @@ class SpeakerEmbeddingDataset(Dataset):
         self.labels = [self.speaker_to_label[speaker_id] for speaker_id in self.speaker_ids]
         
         # 预加载所有嵌入到内存中
+        self.default_embedding_dim = self._infer_embedding_dim()
         if self.preload:
-            self.embeddings = []
-            for file_path in self.file_paths:
-                try:
-                    embedding = np.load(file_path)
-                    self.embeddings.append(torch.from_numpy(embedding).float())
-                except Exception as e:
-                    logger.error(f"Error loading {file_path}: {e}")
-                    # 添加一个空的tensor作为占位符
-                    self.embeddings.append(torch.zeros(192))  # 假设嵌入维度为192
-            # logger.info(f"Preloaded {len(self.embeddings)} embeddings into memory")
+            self.embeddings = [self._load_embedding(path) for path in self.file_paths]
+
+    def _infer_embedding_dim(self) -> int:
+        for file_path in self.file_paths:
+            try:
+                emb = np.load(file_path)
+                if emb.ndim >= 1:
+                    return int(emb.shape[-1])
+            except Exception:
+                continue
+        return 192
+
+    def _load_embedding(self, file_path: Path) -> torch.Tensor:
+        try:
+            embedding = np.load(file_path)
+            return torch.from_numpy(embedding).float()
+        except Exception as e:
+            logger.error(f"Error loading {file_path}: {e}")
+            return torch.zeros(self.default_embedding_dim)
     
     def __len__(self):
         if self.empty:
@@ -78,22 +92,10 @@ class SpeakerEmbeddingDataset(Dataset):
             # 从内存中获取预加载的嵌入
             embedding = self.embeddings[idx]
         else:
-            # 从磁盘读取嵌入
-            file_path = self.file_paths[idx]
-            try:
-                embedding = np.load(file_path)
-                embedding = torch.from_numpy(embedding).float()
-            except Exception as e:
-                logger.error(f"Error loading {file_path}: {e}")
-                # 返回一个空的tensor作为占位符
-                embedding = torch.zeros(192)  # 假设嵌入维度为192
+            # 直接从磁盘加载嵌入
+            embedding = self._load_embedding(self.file_paths[idx])
 
-        # 对于OOD数据集，标签设为-1
-        if self.ood_flag:
-            label = -1
-        else:
-            label = self.labels[idx]
-
+        label = -1 if self.ood_flag else self.labels[idx]
         speaker_id = self.speaker_ids[idx]
         
         return embedding, label, speaker_id, str(self.file_paths[idx])
@@ -112,10 +114,17 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
         test_loaders: 每个family的测试DataLoader字典
     """
     dataset_root = Path(dataset_root)
-    families = [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")]
+    families = sorted(
+        [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")],
+        key=lambda p: p.name,
+    )
     
     support_loaders = {}
     combined_test_loaders = {}
+
+    if len(families) < 2:
+        logger.warning("At least 2 families are required for OOD evaluation; got %d", len(families))
+        return support_loaders, combined_test_loaders
     
     for idx, family in enumerate(families):
         family_name = family.name
@@ -132,7 +141,7 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
                 batch_size=batch_size,
                 shuffle=True,
                 num_workers=4,
-                pin_memory=True
+                pin_memory=True,
             )
             support_loaders[family_name] = support_dataloader
         except Exception as e:
@@ -142,17 +151,14 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
         # 创建测试集dataloader
         try:
             test_dataset = SpeakerEmbeddingDataset(family, split='test', preload=preload)
-            if idx + 1 < len(families):
-                # 检查下一个family的test数据是否为空，以防止跨family错误
-                ood_test_dataset = SpeakerEmbeddingDataset(families[idx+1], split='test', preload=preload, ood_flag=True)
-            else:
-                ood_test_dataset = SpeakerEmbeddingDataset(families[0], split='test', preload=preload, ood_flag=True)
+            ood_family = families[(idx + 1) % len(families)]
+            ood_test_dataset = SpeakerEmbeddingDataset(
+                ood_family, split='test', preload=preload, ood_flag=True
+            )
                 
             if test_dataset.empty or ood_test_dataset.empty:
                 logger.warning(f"Skipping {family_name} test dataset (empty)")
-                # 如果测试集为空，我们也需要移除训练集的dataloader
-                if family_name in support_loaders:
-                    del support_loaders[family_name]
+                support_loaders.pop(family_name, None)
                 continue
 
             combined_dataset = ConcatDataset([test_dataset, ood_test_dataset])
@@ -162,20 +168,15 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
                 batch_size=batch_size,
                 shuffle=True,
                 num_workers=4,
-                pin_memory=True
+                pin_memory=True,
             )
             combined_test_loaders[family_name] = combined_test_dataloader
 
         except Exception as e:
             logger.error(f"Error creating test dataloader for {family_name}: {e}")
             # 如果测试集创建失败，我们也需要移除训练集的dataloader
-            if family_name in support_loaders:
-                del support_loaders[family_name]
+            support_loaders.pop(family_name, None)
             continue
-        
-        # logger.info(f"Family: {family_name}")
-        # logger.info(f"Train samples: {len(train_dataset)}, batches: {len(support_dataloader)}")
-        # logger.info(f"Test samples: {len(test_dataset)}, batches: {len(test_dataloader)}")
     
     return support_loaders, combined_test_loaders
 
@@ -217,7 +218,7 @@ def create_combined_dataloader(families, split='train', batch_size=8, preload=Fa
         batch_size=batch_size,
         shuffle=(split == 'train'),
         num_workers=4,
-        pin_memory=True
+        pin_memory=True,
     )
     
     logger.info(f"Combined {split} dataset: {len(combined_dataset)} samples, {len(dataloader)} batches")
@@ -249,7 +250,11 @@ if __name__ == "__main__":
                 break
     
     # # 方法2: 创建合并所有families的DataLoader
-    # families = [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")]
+    families = sorted(
+        [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")],
+        key=lambda p: p.name,
+    )
+    
     # combined_train_dataloader = create_combined_dataloader(families, split='train', batch_size=8, preload=True)
     # combined_test_dataloader = create_combined_dataloader(families, split='test', batch_size=8, preload=True)
     
