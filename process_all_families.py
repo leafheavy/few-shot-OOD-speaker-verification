@@ -6,6 +6,100 @@ import argparse
 from pathlib import Path
 from tqdm import tqdm
 
+def _extract_speaker_id(rel_path: Path) -> str | None:
+    """Try to locate speaker folder name like id0001 from a relative path."""
+    for part in rel_path.parts:
+        if part.startswith("id"):
+            return part
+    return None
+
+def _normalize_embedding_layout(family: Path, split: str) -> int:
+    """
+    Ensure npy layout is: family/embedding/{split}/idXXXX/*.npy.
+
+    Returns:
+        Number of files moved.
+    """
+    split_root = family / "embedding" / split
+    split_root.mkdir(parents=True, exist_ok=True)
+
+    def _speaker_from_rel(rel: Path) -> str:
+        parts = list(rel.parts)
+
+        # 去掉历史错误前缀: familyXXXX/test 或重复 split 前缀
+        while len(parts) >= 2 and parts[0] == family.name and parts[1] == split:
+            parts = parts[2:]
+        while parts and parts[0] == split:
+            parts = parts[1:]
+
+        for part in parts:
+            if part.startswith("id"):
+                return part
+
+        speaker = _extract_speaker_id(rel)
+        return speaker or "unknown_speaker"
+
+    def _move_one_file(npy_path: Path, rel_base: Path) -> int:
+        rel = npy_path.relative_to(rel_base)
+        speaker_id = _speaker_from_rel(rel)
+
+        target_dir = split_root / speaker_id
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / npy_path.name
+
+        if npy_path.resolve() == target_path.resolve():
+            return 0
+
+        if target_path.exists():
+            stem = target_path.stem
+            suffix = target_path.suffix
+            idx = 1
+            while True:
+                candidate = target_dir / f"{stem}_{idx}{suffix}"
+                if not candidate.exists():
+                    target_path = candidate
+                    break
+                idx += 1
+
+        npy_path.rename(target_path)
+        return 1
+
+    moved = 0
+
+    # 兼容历史错误目录: embedding/familyXXXX/{split}/...
+    legacy_split_root = family / "embedding" / family.name / split
+    if legacy_split_root.exists():
+        for npy_path in list(legacy_split_root.rglob("*.npy")):
+            moved += _move_one_file(npy_path, legacy_split_root)
+
+    # 处理 split 目录下的所有嵌套文件（如 test/familyXXXX/test/idXXXX/*.npy）
+    for npy_path in list(split_root.rglob("*.npy")):
+        moved += _move_one_file(npy_path, split_root)
+
+    # 清理 split 内归位后遗留的空目录
+    for d in sorted((x for x in split_root.rglob("*") if x.is_dir()), key=lambda x: len(x.parts), reverse=True):
+        if d == split_root:
+            continue
+        try:
+            d.rmdir()
+        except OSError:
+            pass
+
+    # 清理 legacy family 目录（若为空）
+    legacy_family_dir = family / "embedding" / family.name
+    if legacy_family_dir.exists():
+        for d in sorted((x for x in legacy_family_dir.rglob("*") if x.is_dir()), key=lambda x: len(x.parts), reverse=True):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+        try:
+            legacy_family_dir.rmdir()
+        except OSError:
+            pass
+
+    return moved
+
 def _count_non_empty_lines(path: Path) -> int:
     with path.open("r", encoding="utf-8") as f:
         return sum(1 for line in f if line.strip())
@@ -13,34 +107,10 @@ def _count_non_empty_lines(path: Path) -> int:
 def _count_npy_files(path: Path) -> int:
     return sum(1 for _ in path.rglob("*.npy"))
 
-def _first_non_empty_line(path: Path) -> str:
-    with path.open("r", encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
-            if line:
-                return line
-    return ""
-
 def _resolve_split_output_dir(family: Path, split: str, wav_list_path: Path) -> Path:
-    """Choose output dir so final npy path always contains family/split prefix once."""
-    base_dir = family / "embedding" / split
-    first_item = _first_non_empty_line(wav_list_path)
-    if not first_item:
-        return base_dir / family.name / split
-
-    wav_id = os.path.splitext(os.path.normpath(first_item))[0]
-    while wav_id.startswith('./'):
-        wav_id = wav_id[2:]
-    wav_id = wav_id.lstrip('/')
-
-    family_split_prefix = f"{family.name}/{split}/"
-    split_prefix = f"{split}/"
-
-    if wav_id.startswith(family_split_prefix):
-        return base_dir
-    if wav_id.startswith(split_prefix):
-        return base_dir / family.name
-    return base_dir / family.name / split
+    """输出到 embedding/{split}，再归位为 embedding/{split}/idXXXX/*.npy。"""
+    _ = wav_list_path
+    return family / "embedding" / split
 
 def _resolve_infer_script_path(script_path: str) -> Path:
     """Resolve infer_sv_batch.py path robustly for Linux/Windows style inputs."""
@@ -157,11 +227,16 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             subprocess.run(cmd_train, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的train列表")
             train_actual = _count_npy_files(train_output_dir)
+            train_moved = _normalize_embedding_layout(family, "train")
+            train_actual = _count_npy_files(family / "embedding" / "train")
             if train_actual < train_expected:
                 raise RuntimeError(
                     f"{family.name} train embedding数量不足: expected={train_expected}, actual={train_actual}"
                 )
-            print(f"[{family.name}] train完成: {train_actual}/{train_expected}", flush=True)
+            print(
+                f"[{family.name}] train完成: {train_actual}/{train_expected}, 归位文件={train_moved}",
+                flush=True
+            )
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的train列表时出错: {e}")
             continue
@@ -182,11 +257,16 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             subprocess.run(cmd_test, check=True, cwd=str(dataset_root))
             # print(f"成功处理 {family.name} 的test列表")
             test_actual = _count_npy_files(test_output_dir)
+            test_moved = _normalize_embedding_layout(family, "test")
+            test_actual = _count_npy_files(family / "embedding" / "test")
             if test_actual < test_expected:
                 raise RuntimeError(
                     f"{family.name} test embedding数量不足: expected={test_expected}, actual={test_actual}"
                 )
-            print(f"[{family.name}] test完成: {test_actual}/{test_expected}", flush=True)
+            print(
+                f"[{family.name}] test完成: {test_actual}/{test_expected}, 归位文件={test_moved}",
+                flush=True
+            )
             print(f"[{family.name}] 全部完成", flush=True)
         except (subprocess.CalledProcessError, RuntimeError) as e:
             print(f"处理 {family.name} 的test列表时出错: {e}")
