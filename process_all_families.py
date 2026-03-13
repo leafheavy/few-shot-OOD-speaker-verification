@@ -24,7 +24,7 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
     # 忽略Python警告
     warnings.filterwarnings("ignore")
 
-    dataset_root = Path(dataset_root)
+    dataset_root = Path(dataset_root).resolve()
     families = [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")]
     
     print(f"找到 {len(families)} 个Family文件夹")
@@ -34,8 +34,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
     
     for family in tqdm(families, desc="处理Family"):
         # 检查是否存在WAV列表文件
-        train_list = family / "train_wav_list.txt"
-        test_list = family / "test_wav_list.txt"
+        train_list = (family / "train_wav_list.txt").resolve()
+        test_list = (family / "test_wav_list.txt").resolve()
         
         if not train_list.exists() or not test_list.exists():
             print(f"警告: {family.name} 缺少WAV列表文件，跳过...")
