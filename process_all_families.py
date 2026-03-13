@@ -1,5 +1,6 @@
 import os
 import warnings
+import sys
 import subprocess
 import argparse
 from pathlib import Path
@@ -60,6 +61,36 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
     # 获取脚本的绝对路径
     script_path = _resolve_infer_script_path(script_path)
     print(f"使用特征提取脚本: {script_path}", flush=True)
+    print(f"使用 Python 解释器: {sys.executable}", flush=True)
+    
+    # 预检查运行环境，避免进入family循环后才逐个失败
+    try:
+        subprocess.run(
+            [sys.executable, str(script_path), "--help"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except subprocess.CalledProcessError as e:
+        stderr_text = (e.stderr or "").strip()
+        if "No module named 'addict'" in stderr_text:
+            raise RuntimeError(
+                "当前 Python 环境缺少依赖 addict。\n"
+                "请在与本程序相同环境安装依赖：pip install addict modelscope\n"
+                f"当前解释器: {sys.executable}"
+            ) from e
+        if "No audio backend is available" in stderr_text:
+            raise RuntimeError(
+                "torchaudio 未检测到可用音频后端（如 soundfile/ffmpeg）。\n"
+                "请安装并配置 torchaudio 所需后端后重试。"
+            ) from e
+        raise RuntimeError(
+            "infer_sv_batch.py 启动失败，请检查依赖与环境是否完整。\n"
+            f"当前解释器: {sys.executable}\n"
+            f"脚本路径: {script_path}\n"
+            f"stderr:\n{stderr_text}"
+        ) from e
     
     for family in tqdm(families, desc="处理Family"):
         # 检查是否存在WAV列表文件
@@ -84,7 +115,7 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
         # 处理train列表
         # print(f"处理 {family.name} 的train列表...")
         cmd_train = [
-            "python", str(script_path),
+            sys.executable, str(script_path),
             "--model_id", model_id,
             "--wavs", str(train_list),
             "--feat_out_dir", str(train_output_dir),
@@ -109,7 +140,7 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
         # 处理test列表
         # print(f"处理 {family.name} 的test列表...")
         cmd_test = [
-            "python", str(script_path),
+            sys.executable, str(script_path),
             "--model_id", model_id,
             "--wavs", str(test_list),
             "--feat_out_dir", str(test_output_dir),
