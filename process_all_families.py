@@ -12,6 +12,34 @@ def _count_non_empty_lines(path: Path) -> int:
 def _count_npy_files(path: Path) -> int:
     return sum(1 for _ in path.rglob("*.npy"))
 
+def _resolve_infer_script_path(script_path: str) -> Path:
+    """Resolve infer_sv_batch.py path robustly for Linux/Windows style inputs."""
+    raw = str(script_path).strip().strip('"').strip("'")
+    normalized = raw.replace('\\', '/')
+
+    p = Path(normalized).expanduser()
+    repo_root = Path(__file__).resolve().parent
+
+    candidates = []
+    if p.is_absolute():
+        candidates.append(p)
+        # Handle inputs like "\\speakerlab\\bin\\" -> "/speakerlab/bin/".
+        candidates.append(repo_root / normalized.lstrip('/'))
+    else:
+        candidates.append((Path.cwd() / p).resolve())
+        candidates.append((repo_root / p).resolve())
+
+    for cand in candidates:
+        if cand.is_dir():
+            cand = cand / 'infer_sv_batch.py'
+        if cand.is_file():
+            return cand.resolve()
+
+    raise FileNotFoundError(
+        f"未找到 infer_sv_batch.py。收到 script_path={script_path!r}。"
+        "请传入文件路径（例如 /workspace/.../speakerlab/bin/infer_sv_batch.py）"
+    )
+
 def process_family_wav_lists(dataset_root, model_id, script_path):
     """
     自动处理所有Family文件夹中的train和test WAV列表
@@ -30,7 +58,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
     print(f"找到 {len(families)} 个Family文件夹")
     
     # 获取脚本的绝对路径
-    script_path = Path(script_path).resolve()
+    script_path = _resolve_infer_script_path(script_path)
+    print(f"使用特征提取脚本: {script_path}", flush=True)
     
     for family in tqdm(families, desc="处理Family"):
         # 检查是否存在WAV列表文件
