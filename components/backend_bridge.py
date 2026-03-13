@@ -87,6 +87,7 @@ def import_user_modules(user_code_dir: str) -> Dict[str, object]:
         "dataloader",
         "dataloader_OOD",
         "baseline",
+        "baseline_OOD",
         "few_shot_learning",
     ]
     optional_modules = [
@@ -285,9 +286,9 @@ class FewShotRunner:
         }
 
         # 6. OOD 指标
-        if self.mode == "ood":
+        if self.mode in ("ood", "baseline_ood"):
             ood_mask     = ~id_mask
-            confidence   = torch.max(torch.softmax(sim_mat, dim=1), dim=1)[0].detach().numpy()
+            confidence   = torch.max(sim_mat, dim=1)[0].detach().numpy()
             ood_label_np = id_mask.numpy().astype(int)
 
             if torch.any(ood_mask):

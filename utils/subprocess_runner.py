@@ -9,6 +9,9 @@ import queue
 from pathlib import Path
 from typing import Optional, List, Callable
 
+IGNORED_PATTERNS = (
+    "missing ScriptRunContext! This warning can be ignored when running in bare mode.",
+)
 
 class LiveProcessRunner:
     """
@@ -48,7 +51,10 @@ class LiveProcessRunner:
         """后台线程：读取子进程输出行并入队"""
         try:
             for line in self._proc.stdout:
-                self._queue.put(line.rstrip("\n"))
+                clean_line = line.rstrip("\n")
+                if any(pattern in clean_line for pattern in IGNORED_PATTERNS):
+                    continue
+                self._queue.put(clean_line)
         finally:
             self._proc.stdout.close()
             self._done.set()

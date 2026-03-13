@@ -238,11 +238,18 @@ def plot_similarity_heatmap(
         colorscale="RdBu", zmid=0,
         colorbar=dict(title="相似度"),
     ))
+    adaptive_height = min(900, max(320, 70 + n_rows * 18))
+
     fig.update_layout(
-        title=title, height=max(350, n_rows * 22),
-        xaxis_title="支撑集 (Prototype)", yaxis_title="测试样本",
-        margin=dict(l=80, r=60, t=60, b=80),
+        title=title,
+        height=adaptive_height,
+        autosize=True,
+        xaxis_title="支撑集 (Prototype)",
+        yaxis_title="测试样本",
+        margin=dict(l=40, r=20, t=60, b=40),
     )
+    fig.update_xaxes(automargin=True, tickangle=-35)
+    fig.update_yaxes(automargin=True, tickmode="array", tickfont=dict(size=10))
     return fig
 
 

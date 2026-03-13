@@ -504,19 +504,20 @@ with tab3:
 
         mode = st.radio(
             "运行模式",
-            options=["baseline", "standard", "ood"],
+            options=["baseline", "baseline_ood", "standard", "ood"],
             format_func=lambda x: {
                 "baseline": "📏 Baseline (余弦相似度，无学习)",
+                "baseline_ood": "📏 OOD Baseline (余弦相似度 + 阈值拒识)",
                 "standard": "🧠 Few-Shot Learning (原型网络)",
                 "ood": "🔍 OOD-Aware (原型网络 + 开放集检测)",
             }[x],
-            index=["baseline", "standard", "ood"].index(
+            index=["baseline", "baseline_ood", "standard", "ood"].index(
                 st.session_state.get("mode", "standard")
             ),
         )
         st.session_state["mode"] = mode
 
-        if mode != "baseline":
+        if mode not in ("baseline", "baseline_ood"):
             st.markdown("---")
             epochs = st.slider("训练轮数 (Epochs)", 10, 300, 100, 10)
             lr = st.select_slider(
@@ -528,7 +529,7 @@ with tab3:
         else:
             epochs, lr = 0, 0.0
 
-        if mode == "ood":
+        if mode in ("ood", "baseline_ood"):
             ood_threshold = st.slider(
                 "OOD 置信度阈值",
                 min_value=0.1, max_value=0.9, value=0.4, step=0.05,
@@ -560,7 +561,7 @@ with tab3:
             "模块已加载": mods is not None,
         }
         if mods:
-            key = {"baseline": "baseline", "standard": "few_shot_learning",
+            key = {"baseline": "baseline", "baseline_ood": "baseline_OOD", "standard": "few_shot_learning",
                    "ood": "few_shot_learning_OOD_other_loss_xz"}.get(mode, "few_shot_learning")
             checks3[f"'{key}' 模块可用"] = mods.get(key) is not None
 
@@ -670,7 +671,7 @@ with tab3:
         s = st.session_state["summary"]
         cur_mode = st.session_state["mode"]
 
-        if cur_mode == "ood":
+        if cur_mode in ("ood", "baseline_ood"):
             c1,c2,c3,c4,c5,c6 = st.columns(6)
             c1.metric("总错误率", f"{s.get('total_err_rate',0):.2f}%")
             c2.metric("平均 EER", f"{s.get('mean_eer',0):.2f}%")
@@ -750,7 +751,7 @@ with tab4:
         fig_fam = plot_family_metrics(family_results, mode=cur_mode)
         st.plotly_chart(fig_fam, use_container_width=True)
 
-        if cur_mode == "ood":
+        if cur_mode in ("ood", "baseline_ood"):
             st.markdown("#### 🕸️ OOD 综合能力雷达图")
             fig_radar = plot_ood_radar(summary)
             st.plotly_chart(fig_radar, use_container_width=True)
