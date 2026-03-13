@@ -2,6 +2,8 @@
 app.py — 基于小样本学习的开放集说话人识别系统 · 前端主程序
 广东工业大学 · 计算机学院 · 人工智能 22级2班 · 叶重 (3122005057)
 
+'python -m streamlit run app.py'
+
 系统功能:
   Step 1  数据集构建   (few_shot_dataset_construction + generate_wav_list)
   Step 2  特征提取     (process_all_families via 3D-Speaker)
