@@ -39,7 +39,7 @@ class SpeakerEmbeddingDataset(Dataset):
         if not self.split_dir.exists():
             raise ValueError(f"Directory {self.split_dir} does not exist")
         
-        self.file_paths = sorted(self.split_dir.glob('*.npy'))
+        self.file_paths = sorted(self.split_dir.rglob('*.npy'))
 
         if not self.file_paths:
             logger.warning(f"No embedding files found in {self.split_dir}")

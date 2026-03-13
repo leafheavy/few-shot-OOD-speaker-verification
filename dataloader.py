@@ -26,7 +26,8 @@ class SpeakerEmbeddingDataset(Dataset):
             raise ValueError(f"Directory {self.split_dir} does not exist")
         
         # 收集所有embedding文件路径
-        self.file_paths = list(self.split_dir.glob('*.npy'))
+        # 收集所有 embedding 文件路径（兼容 id 子目录与旧平铺结构）
+        self.file_paths = sorted(self.split_dir.rglob('*.npy'))
         
         # 检查是否有任何嵌入文件
         if not self.file_paths:
@@ -36,11 +37,11 @@ class SpeakerEmbeddingDataset(Dataset):
         
         self.empty = False
         
-        # 从文件名中提取speaker ID
+        # 从路径/文件名中提取 speaker ID：优先使用父目录 idXXXX
         self.speaker_ids = []
         for file_path in self.file_paths:
-            # 假设文件名格式为 "speaker_id_xxx.npy"
-            speaker_id = file_path.stem.split('_')[0]
+            rel = file_path.relative_to(self.split_dir)
+            speaker_id = rel.parts[0] if len(rel.parts) > 1 else file_path.stem.split('_')[0]
             self.speaker_ids.append(speaker_id)
         
         # 创建speaker到label的映射

@@ -84,6 +84,11 @@ def _init():
 
 _init()
 
+def _count_embeddings(split_dir: Path) -> int:
+    """统计 split 目录下所有嵌套层级的 npy 文件数量。"""
+    if not split_dir.exists():
+        return 0
+    return sum(1 for _ in split_dir.rglob("*.npy"))
 
 # ──────────────────────────────────────────────
 # 侧边栏 — 路径与全局配置
@@ -138,7 +143,9 @@ with st.sidebar:
     if dataset_root:
         root_path = Path(dataset_root)
         families = sorted(root_path.glob("family*")) if root_path.exists() else []
-        n_emb = sum(1 for _ in root_path.glob("family*/embedding/train/*.npy")) if root_path.exists() else 0
+        n_emb = sum(
+            _count_embeddings(f / "embedding" / "train") for f in families
+        ) if root_path.exists() else 0
         st.caption(f"Family 数: **{len(families)}** | Train embedding: **{n_emb}**")
 
     st.markdown("---")
@@ -342,8 +349,8 @@ with tab1:
         n_fam = len(families)
         n_train_wav = sum(1 for _ in root_p.glob("family*/train/*/*.wav"))
         n_test_wav = sum(1 for _ in root_p.glob("family*/test/*/*.wav"))
-        n_train_emb = sum(1 for _ in root_p.glob("family*/embedding/train/*.npy"))
-        n_test_emb = sum(1 for _ in root_p.glob("family*/embedding/test/*.npy"))
+        n_train_emb = sum(_count_embeddings(f / "embedding" / "train") for f in families)
+        n_test_emb = sum(_count_embeddings(f / "embedding" / "test") for f in families)
         n_wav_list = sum(1 for _ in root_p.glob("family*/train_wav_list.txt"))
 
         cols = st.columns(5)
@@ -357,8 +364,8 @@ with tab1:
             # 抽样展示前5个family
             st.markdown("**前 5 个 Family 状态:**")
             for fam in families[:5]:
-                n_tr = len(list(fam.glob("embedding/train/*.npy")))
-                n_te = len(list(fam.glob("embedding/test/*.npy")))
+                n_tr = _count_embeddings(fam / "embedding" / "train")
+                n_te = _count_embeddings(fam / "embedding" / "test")
                 has_list = (fam / "train_wav_list.txt").exists()
                 icon_emb = "✅" if n_tr > 0 else "❌"
                 icon_list = "✅" if has_list else "⚠️"
@@ -412,6 +419,36 @@ with tab2:
                              use_container_width=True,
                              disabled=not all(checks.values()))
 
+    # ── 提取进度统计 ──
+    st.markdown("---")
+    progress_panel = st.empty()
+
+    def render_embedding_progress(root_path: Path):
+        families_local = sorted(root_path.glob("family*"))
+        total_local = len(families_local)
+        done_local = sum(
+            1
+            for fam in families_local
+            if _count_embeddings(fam / "embedding" / "train") > 0
+            and _count_embeddings(fam / "embedding" / "test") > 0
+        )
+        partial_local = sum(
+            1
+            for fam in families_local
+            if _count_embeddings(fam / "embedding" / "train") > 0
+            or _count_embeddings(fam / "embedding" / "test") > 0
+        ) - done_local
+        pending_local = total_local - done_local - partial_local
+
+        with progress_panel.container():
+            st.markdown("#### 📊 嵌入提取进度")
+            p1, p2, p3 = st.columns(3)
+            p1.metric("✅ 完成", done_local, delta=f"{done_local/max(total_local,1)*100:.0f}%")
+            p2.metric("⚠️ 部分完成", partial_local)
+            p3.metric("⏳ 待提取", pending_local)
+            if total_local > 0:
+                st.progress(done_local / total_local, text=f"{done_local}/{total_local} families 完成特征提取")
+
     with c_ext2:
         st.markdown("#### 提取日志")
         ext_log_box = st.empty()
@@ -447,26 +484,9 @@ with tab2:
                 else:
                     st.error(f"提取异常退出 (code={rc})")
 
-    # ── 提取进度统计 ──
-    st.markdown("---")
+
     if ext_dataset and Path(ext_dataset).exists():
-        st.markdown("#### 📊 嵌入提取进度")
-        root_p = Path(ext_dataset)
-        families = sorted(root_p.glob("family*"))
-        total = len(families)
-        done = sum(1 for f in families
-                   if any(f.glob("embedding/train/*.npy")) and any(f.glob("embedding/test/*.npy")))
-        partial = sum(1 for f in families
-                      if any(f.glob("embedding/train/*.npy")) or any(f.glob("embedding/test/*.npy"))) - done
-        pending = total - done - partial
-
-        p1, p2, p3 = st.columns(3)
-        p1.metric("✅ 完成", done, delta=f"{done/max(total,1)*100:.0f}%")
-        p2.metric("⚠️ 部分完成", partial)
-        p3.metric("⏳ 待提取", pending)
-
-        if total > 0:
-            st.progress(done / total, text=f"{done}/{total} families 完成特征提取")
+        render_embedding_progress(Path(ext_dataset))
 
 
 # ══════════════════════════════════════════════════════════════
