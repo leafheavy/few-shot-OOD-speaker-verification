@@ -140,7 +140,7 @@ def create_family_loaders(
     """
     root = Path(dataset_root)
 
-    if mode == "ood":
+    if mode in ("ood", "baseline_ood"):
         mod = modules.get("dataloader_OOD") or modules.get("dataloader")
     else:
         mod = modules.get("dataloader")
@@ -163,8 +163,9 @@ def create_family_loaders(
 
 class FewShotRunner:
     """
-    统一封装三种模式：
+    统一封装 4 种模式：
       'baseline'  — InnerProductCalculator（余弦相似度，无梯度更新）
+      'baseline_ood' — Baseline OOD 版（余弦相似度 + 开放集检测）
       'standard'  — FewShotLearning（原型网络 + 熵正则化）
       'ood'       — FewShotLearning OOD 版（ArcFace/CosFace + 开放集检测）
     """
@@ -181,6 +182,11 @@ class FewShotRunner:
             if mod:
                 self._model = mod.InnerProductCalculator(metric="cosine")
 
+        elif self.mode == "baseline_ood":
+            mod = self.modules.get("baseline_OOD")
+            if mod:
+                self._model = mod.InnerProductCalculator(metric="cosine")
+    
         elif self.mode == "standard":
             mod = self.modules.get("few_shot_learning")
             if mod:
@@ -225,17 +231,17 @@ class FewShotRunner:
         m = self._model
 
         # 1. 初始化原型
-        if self.mode == "baseline":
+        if self.mode in ("baseline", "baseline_ood"):
             m.build_W_matrix(support_loader)
         else:
             m.initialization(support_loader)
 
         # 2. 梯度更新（baseline 跳过）
-        if self.mode != "baseline":
+        if self.mode not in ("baseline", "baseline_ood"):
             m.learning(support_loader, Epochs=epochs, lr=lr)
 
         # 3. 推理
-        if self.mode == "baseline":
+        if self.mode in ("baseline", "baseline_ood"):
             raw = m.compute_inner_products(test_loader)
         else:
             raw = m.calculate_result(test_loader)

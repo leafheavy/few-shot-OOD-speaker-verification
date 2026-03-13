@@ -77,6 +77,8 @@ def _init():
         "step2_log":        [],
         "step3_running":    False,
         "step3_progress":   0.0,
+        "step3_stop_requested": False,
+        "step3_ctx":        None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -580,11 +582,10 @@ with tab3:
         prog_text = st.empty()
         result_placeholder = st.empty()
 
-        if run_eval:
+        if run_eval and not st.session_state.get("step3_running", False):
             from components.backend_bridge import (
-                FewShotRunner, create_family_loaders, import_user_modules
+                FewShotRunner, create_family_loaders
             )
-            from utils.metrics import aggregate_family_results
 
             mods = st.session_state["modules"]
             if mods is None:
@@ -616,53 +617,97 @@ with tab3:
                 st.error("模型类未能初始化，请检查模块是否正确加载")
                 st.stop()
 
-            family_results = []
-            total = len([f for f in families if f.name in support_loaders])
-            processed = 0
+            valid_family_names = [
+                f.name for f in families
+                if f.name in support_loaders and f.name in test_loaders
+            ]
+            if not valid_family_names:
+                st.error("未找到可评估的 family（缺少 support/test loader）")
+                st.stop()
 
-            for family in families:
-                fname = family.name
-                if fname not in support_loaders or fname not in test_loaders:
-                    continue
+            st.session_state["step3_ctx"] = {
+                "mode": mode,
+                "epochs": epochs,
+                "lr": lr,
+                "ood_threshold": ood_threshold,
+                "support_loaders": support_loaders,
+                "test_loaders": test_loaders,
+                "runner": runner,
+                "families": valid_family_names,
+                "idx": 0,
+                "family_results": [],
+            }
+            st.session_state["step3_running"] = True
+            st.session_state["step3_stop_requested"] = False
+            st.session_state["family_results"] = []
+            st.session_state["summary"] = {}
+            st.rerun()
 
-                prog_bar.progress(processed / max(total, 1),
-                                  text=f"处理 {fname} ({processed+1}/{total})")
+        if st.session_state.get("step3_running", False):
+            from utils.metrics import aggregate_family_results
 
-                try:
-                    res = runner.run_family(
-                        support_loaders[fname], test_loaders[fname],
-                        epochs=epochs, lr=lr, ood_threshold=ood_threshold,
-                    )
-                    res["family_name"] = fname
-                    family_results.append(res)
-                except Exception as e:
-                    family_results.append({
-                        "family_name": fname, "error": str(e),
-                        "err_rate": 0.0, "eer": 0.0,
-                    })
-                    st.warning(f"⚠️ {fname}: {e}")
+            stop_clicked = st.button("⏹️ Stop", type="secondary", use_container_width=False)
+            if stop_clicked:
+                st.session_state["step3_stop_requested"] = True
 
-                processed += 1
+            ctx = st.session_state.get("step3_ctx") or {}
+            families = ctx.get("families", [])
+            total = len(families)
+            idx = int(ctx.get("idx", 0))
 
-                # 实时汇总显示
-                tmp_summary = aggregate_family_results(family_results)
-                with result_placeholder.container():
-                    m1, m2 = st.columns(2)
-                    m1.metric("已处理 Family", processed)
-                    m2.metric("当前平均 EER", f"{tmp_summary.get('mean_eer', 0):.2f}%")
-                    if mode == "ood":
-                        m3, m4 = st.columns(2)
-                        m3.metric("AUROC", f"{tmp_summary.get('mean_auroc', 0):.4f}")
-                        m4.metric("总错误率", f"{tmp_summary.get('total_err_rate', 0):.2f}%")
+            if total == 0:
+                st.session_state["step3_running"] = False
+                st.error("评估上下文异常：无可处理 family")
+            else:
+                if st.session_state.get("step3_stop_requested", False):
+                    st.session_state["step3_running"] = False
+                    st.warning(f"评估已中止：已完成 {idx}/{total} 个 family")
+                elif idx < total:
+                    fname = families[idx]
+                    prog_bar.progress(idx / total, text=f"处理 {fname} ({idx+1}/{total})")
 
-            prog_bar.progress(1.0, text="✅ 评估完成!")
+                    try:
+                        res = ctx["runner"].run_family(
+                            ctx["support_loaders"][fname], ctx["test_loaders"][fname],
+                            epochs=ctx["epochs"], lr=ctx["lr"], ood_threshold=ctx["ood_threshold"],
+                        )
+                        res["family_name"] = fname
+                        ctx["family_results"].append(res)
+                    except Exception as e:
+                        ctx["family_results"].append({
+                            "family_name": fname, "error": str(e),
+                            "err_rate": 0.0, "eer": 0.0,
+                        })
+                        st.warning(f"⚠️ {fname}: {e}")
 
-            # 保存结果
-            st.session_state["family_results"] = family_results
-            summary = aggregate_family_results(family_results)
-            st.session_state["summary"] = summary
+                    ctx["idx"] = idx + 1
+                    st.session_state["step3_ctx"] = ctx
+                    st.session_state["family_results"] = ctx["family_results"]
+                    st.session_state["summary"] = aggregate_family_results(ctx["family_results"])
 
-            st.success(f"✅ 评估完成！共处理 {len(family_results)} 个 families")
+                    tmp_summary = st.session_state["summary"]
+                    with result_placeholder.container():
+                        m1, m2 = st.columns(2)
+                        m1.metric("已处理 Family", ctx["idx"])
+                        m2.metric("当前平均 EER", f"{tmp_summary.get('mean_eer', 0):.2f}%")
+                        if mode in ("ood", "baseline_ood"):
+                            m3, m4 = st.columns(2)
+                            m3.metric("AUROC", f"{tmp_summary.get('mean_auroc', 0):.4f}")
+                            m4.metric("总错误率", f"{tmp_summary.get('total_err_rate', 0):.2f}%")
+
+                    if ctx["idx"] < total and not st.session_state.get("step3_stop_requested", False):
+                        st.rerun()
+                else:
+                    st.session_state["step3_running"] = False
+
+            final_ctx = st.session_state.get("step3_ctx") or {}
+            done = int(final_ctx.get("idx", 0))
+            total = len(final_ctx.get("families", []))
+            prog_bar.progress(1.0 if total and done >= total else done / max(total, 1),
+                              text="✅ 评估完成!" if total and done >= total else f"处理中... {done}/{total}")
+
+            if (not st.session_state.get("step3_running", False)) and total and done >= total:
+                st.success(f"✅ 评估完成！共处理 {len(st.session_state['family_results'])} 个 families")
 
     # ── 当前结果摘要 ──
     if st.session_state["family_results"]:
