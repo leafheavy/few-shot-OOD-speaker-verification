@@ -10,6 +10,10 @@ Usage:
     `python infer_sv_batch.py --model_id $model_id --wavs $wav_list --feat_out_dir $feat_out_dir`
 """
 
+import warnings
+# 忽略 torchvision 关于图像扩展失败的特定UserWarning
+warnings.filterwarnings("ignore", message="Failed to load image Python extension", category=UserWarning, module="torchvision.io.image")
+
 import os
 import sys
 import re

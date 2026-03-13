@@ -13,6 +13,35 @@ def _count_non_empty_lines(path: Path) -> int:
 def _count_npy_files(path: Path) -> int:
     return sum(1 for _ in path.rglob("*.npy"))
 
+def _first_non_empty_line(path: Path) -> str:
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                return line
+    return ""
+
+def _resolve_split_output_dir(family: Path, split: str, wav_list_path: Path) -> Path:
+    """Choose output dir so final npy path always contains family/split prefix once."""
+    base_dir = family / "embedding" / split
+    first_item = _first_non_empty_line(wav_list_path)
+    if not first_item:
+        return base_dir / family.name / split
+
+    wav_id = os.path.splitext(os.path.normpath(first_item))[0]
+    while wav_id.startswith('./'):
+        wav_id = wav_id[2:]
+    wav_id = wav_id.lstrip('/')
+
+    family_split_prefix = f"{family.name}/{split}/"
+    split_prefix = f"{split}/"
+
+    if wav_id.startswith(family_split_prefix):
+        return base_dir
+    if wav_id.startswith(split_prefix):
+        return base_dir / family.name
+    return base_dir / family.name / split
+
 def _resolve_infer_script_path(script_path: str) -> Path:
     """Resolve infer_sv_batch.py path robustly for Linux/Windows style inputs."""
     raw = str(script_path).strip().strip('"').strip("'")
@@ -102,8 +131,8 @@ def process_family_wav_lists(dataset_root, model_id, script_path):
             continue
         
         # 创建输出目录
-        train_output_dir = family / "embedding" / "train"
-        test_output_dir = family / "embedding" / "test"
+        train_output_dir = _resolve_split_output_dir(family, "train", train_list)
+        test_output_dir = _resolve_split_output_dir(family, "test", test_list)
         train_output_dir.mkdir(parents=True, exist_ok=True)
         test_output_dir.mkdir(parents=True, exist_ok=True)
         
