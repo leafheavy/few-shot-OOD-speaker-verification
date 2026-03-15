@@ -241,7 +241,9 @@ class FewShotRunner:
             m.learning(support_loader, Epochs=epochs, lr=lr)
 
         # 3. 推理
-        if self.mode in ("baseline", "baseline_ood"):
+        if self.mode == "baseline_ood":
+            raw = m.compute_inner_products(test_loader, threshold=ood_threshold)
+        elif self.mode == "baseline":
             raw = m.compute_inner_products(test_loader)
         else:
             raw = m.calculate_result(test_loader)
@@ -253,12 +255,30 @@ class FewShotRunner:
         # 4. 分类错误率（仅计 in-domain）
         id_mask = true_labels >= 0
         if torch.any(id_mask):
-            err_num  = int(torch.count_nonzero(pred[id_mask] - true_labels[id_mask]).item())
+            id_true = true_labels[id_mask]
+            id_pred = pred[id_mask]
             test_num = int(id_mask.sum().item())
-            err_rate = err_num / test_num * 100
+
+            if self.mode in ("ood", "baseline_ood"):
+                id_reject_mask = id_pred < 0
+                id_accept_mask = ~id_reject_mask
+
+                id_false_reject_num = int(torch.count_nonzero(id_reject_mask).item())
+                if torch.any(id_accept_mask):
+                    id_class_err_num = int(torch.count_nonzero(id_pred[id_accept_mask] - id_true[id_accept_mask]).item())
+                else:
+                    id_class_err_num = 0
+
+                err_num = id_false_reject_num + id_class_err_num
+                err_rate = err_num / test_num * 100
+            else:
+                err_num = int(torch.count_nonzero(id_pred - id_true).item())
+                err_rate = err_num / test_num * 100
         else:
             err_num = test_num = 0
             err_rate = 0.0
+            id_false_reject_num = 0
+            id_class_err_num = 0
 
         # 5. EER
         eer_scores: List[float] = []
@@ -309,7 +329,7 @@ class FewShotRunner:
 
                 result.update({
                     "id_false_reject_rate": id_fr / max(int(id_mask.sum()), 1) * 100,
-                    "id_class_err_rate"   : err_rate,
+                    "id_class_err_rate"   : id_class_err_num / max(int(id_mask.sum()), 1) * 100,
                     "ood_err_rate"        : ood_err_num / max(ood_test_num, 1) * 100,
                     **ood_m,
                 })
