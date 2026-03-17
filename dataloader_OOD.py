@@ -166,11 +166,18 @@ def create_dataloaders_for_families(dataset_root, batch_size=8, preload=False):
             combined_test_dataloader = DataLoader(
                 combined_dataset,
                 batch_size=batch_size,
-                shuffle=True,
+                shuffle=False,
                 num_workers=4,
                 pin_memory=True,
             )
             combined_test_loaders[family_name] = combined_test_dataloader
+            logger.info(
+                "OOD pairing: ID=%s (%d samples) -> OOD=%s (%d samples)",
+                family_name,
+                len(test_dataset),
+                ood_family.name,
+                len(ood_test_dataset),
+            )
 
         except Exception as e:
             logger.error(f"Error creating test dataloader for {family_name}: {e}")

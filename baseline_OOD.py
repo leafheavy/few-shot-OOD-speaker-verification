@@ -150,14 +150,16 @@ class InnerProductCalculator:
         X_test = torch.cat(all_test_embeddings, dim=0)  # [num_test, embedding_dim]
         true_labels = torch.cat(all_true_labels, dim=0)
         
-        # 计算内积相似度矩阵 [num_test, num_support]
+        # 计算原始相似度矩阵 [num_test, num_support]
         if self.metric == 'inner_product':
-            similarity_matrix = torch.matmul(X_test, self.W.T)  # 内积[1,6](@ref)
+            similarity_matrix = torch.matmul(X_test, self.W.T)  # 内积
         else:  # cosine
             X_test = F.normalize(X_test, p=2, dim=1)
-            similarity_matrix = torch.matmul(X_test, self.W.T)  # 已经归一化，内积=余弦相似度
-        # 对每一行进行 Softmax 归一化
-        similarity_matrix = F.softmax(similarity_matrix, dim=1)
+            similarity_matrix = torch.matmul(X_test, self.W.T)  # 已归一化，内积=余弦相似度
+
+        # 注意：OOD 阈值应当作用在“原始相似度”上。
+        # 如果先做 softmax，分数会受 support 样本数量影响并整体变小，
+        # 容易导致 ID 样本被大面积误拒。
         # logger.info(f"相似度矩阵形状: {similarity_matrix.shape}")
         
         # 将样本索引映射为说话人标签
@@ -179,7 +181,7 @@ class InnerProductCalculator:
             'W_matrix': self.W,
             'support_labels': self.support_labels,
             'train_speaker_ids': self.train_speaker_ids,
-            'max_similarities': torch.max(similarity_matrix, dim=1)[0],
+            'max_similarities': max_values,
             'prediction': predicted_labels,  # 现在范围是 0~4
             'true_labels': true_labels,       # 范围也是 0~4
             'test_speaker_ids': all_test_speaker_ids
@@ -196,7 +198,7 @@ if __name__ == "__main__":
         
         support_loaders, test_loaders = create_dataloaders_for_families(dataset_root, batch_size=8, preload=True)
 
-        families = [f for f in dataset_root.iterdir() if f.is_dir() and f.name.startswith("family")]
+        family_names = sorted(set(support_loaders.keys()) & set(test_loaders.keys()))
 
         total_eers = []
         total_id_correct = 0
@@ -208,9 +210,9 @@ if __name__ == "__main__":
         total_auroc = []
         total_fpr95 = []
 
-        for family in tqdm(families):
-            support_loader = support_loaders[family.name]
-            test_loader = test_loaders[family.name]
+        for family_name in tqdm(family_names):
+            support_loader = support_loaders[family_name]
+            test_loader = test_loaders[family_name]
         
         # # 选择第一个family进行示例
         # family_name = list(support_loaders.keys())[0]
@@ -282,13 +284,13 @@ if __name__ == "__main__":
 
             if metrics['auroc'] is not None and metrics['fpr95'] is not None:
                 f.write(
-                    f"针对 {family.name} | ID准确率: {id_acc_pct:.2f}% | ID错分为OOD: {id_fr_pct:.2f}% | "
+                    f"针对 {family_name} | ID准确率: {id_acc_pct:.2f}% | ID错分为OOD: {id_fr_pct:.2f}% | "
                     f"OOD错分为ID: {ood_fa_pct:.2f}% | OOD AUROC: {metrics['auroc']:.4f} | "
                     f"FPR@95: {metrics['fpr95']:.4f} | proxy-EER: {eer*100:.2f}% (阈值: {eer_threshold:.4f})\n"
                 )
             else:
                 f.write(
-                    f"针对 {family.name} | ID准确率: {id_acc_pct:.2f}% | ID错分为OOD: {id_fr_pct:.2f}% | "
+                    f"针对 {family_name} | ID准确率: {id_acc_pct:.2f}% | ID错分为OOD: {id_fr_pct:.2f}% | "
                     f"OOD错分为ID: {ood_fa_pct:.2f}% | OOD AUROC/FPR@95: 数据不足 | "
                     f"proxy-EER: {eer*100:.2f}% (阈值: {eer_threshold:.4f})\n"
                 )
