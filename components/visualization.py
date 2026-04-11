@@ -286,7 +286,7 @@ def plot_loss_curve(loss_curve: List[float], lr: float, epochs: int) -> go.Figur
 
 def plot_summary_gauges(metrics: Dict, mode: str = "standard") -> go.Figure:
     """绘制核心指标仪表盘 (Indicator 图)"""
-    if mode == "standard":
+    if mode in ("standard", "baseline"):
         indicators = [
             ("总错误率 (%)", metrics.get("total_err_rate", 0), 100, "lower_is_better"),
             ("平均 EER (%)", metrics.get("mean_eer", 0), 100, "lower_is_better"),

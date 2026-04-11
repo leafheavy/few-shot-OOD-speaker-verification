@@ -136,6 +136,7 @@ class FewShotLearning:
 
         self.classifier.train()
 
+        loss_curve = []
         for epoch in range(Epochs):
             epoch_loss = 0.0
             for batch in support_loader:
@@ -157,6 +158,7 @@ class FewShotLearning:
                 epoch_loss += total_loss.item()
             
             avg_loss = epoch_loss / len(support_loader)
+            loss_curve.append(float(avg_loss))
             # if (epoch + 1) % 10 == 0 or epoch == 0:
                 # logger.info(f"Epoch [{epoch+1}/{Epochs}], Loss: {avg_loss:.4f}")
         # logger.info(f"Epoch [{epoch+1}/{Epochs}], Loss: {avg_loss:.4f}")
@@ -165,7 +167,7 @@ class FewShotLearning:
         self.W = self.classifier.weight.data
         # self.b = self.classifier.bias.data
 
-        return 
+        return loss_curve
 
     def calculate_result(self, test_loader):
         """

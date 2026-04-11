@@ -237,8 +237,11 @@ class FewShotRunner:
             m.initialization(support_loader)
 
         # 2. 梯度更新（baseline 跳过）
+        loss_curve = []
         if self.mode not in ("baseline", "baseline_ood"):
-            m.learning(support_loader, Epochs=epochs, lr=lr)
+            ret = m.learning(support_loader, Epochs=epochs, lr=lr)
+            if isinstance(ret, list):
+                loss_curve = ret
 
         # 3. 推理
         if self.mode == "baseline_ood":
@@ -310,7 +313,9 @@ class FewShotRunner:
             "true_labels"      : true_labels,
             "prediction"       : pred,
         }
-
+        if loss_curve:
+            result["loss_curve"] = loss_curve
+            
         # 6. OOD 指标
         if self.mode in ("ood", "baseline_ood"):
             ood_mask     = ~id_mask

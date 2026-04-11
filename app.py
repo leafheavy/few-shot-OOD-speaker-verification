@@ -76,6 +76,7 @@ def _init():
         "family_results":   [],
         "summary":          {},
         "mode":             "standard",
+        "result_mode":      "standard",
         # UI 日志
         "step1_log":        [],
         "step2_log":        [],
@@ -645,6 +646,7 @@ with tab3:
             st.session_state["step3_stop_requested"] = False
             st.session_state["family_results"] = []
             st.session_state["summary"] = {}
+            st.session_state["result_mode"] = mode
             st.rerun()
 
         if st.session_state.get("step3_running", False):
@@ -766,7 +768,13 @@ with tab3:
                 file_name=f"sv_results_{cur_mode}_{time.strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
             )
-
+            txt_str = df.to_csv(index=False, sep="\t").encode("utf-8")
+            st.download_button(
+                "⬇️ 导出 TXT(制表符)",
+                data=txt_str,
+                file_name=f"sv_results_{cur_mode}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+            )
 
 # ══════════════════════════════════════════════════════════════
 # TAB 4 · 结果可视化
@@ -777,7 +785,7 @@ with tab4:
 
     family_results = st.session_state.get("family_results", [])
     summary = st.session_state.get("summary", {})
-    cur_mode = st.session_state.get("mode", "standard")
+    cur_mode = st.session_state.get("result_mode", st.session_state.get("mode", "standard"))
 
     if not family_results:
         st.info("请先在 Step 3 完成模型评估，结果将自动在此处呈现。")
@@ -792,6 +800,24 @@ with tab4:
         st.markdown("#### 🎯 核心指标仪表盘")
         fig_gauge = plot_summary_gauges(summary, mode=cur_mode)
         st.plotly_chart(fig_gauge, use_container_width=True)
+
+        st.markdown('<hr style="margin:8px 0">', unsafe_allow_html=True)
+
+        if cur_mode in ("standard", "ood"):
+            st.markdown("#### 📉 训练损失曲线")
+            valid_loss_families = [r["family_name"] for r in family_results if r.get("loss_curve")]
+            if valid_loss_families:
+                loss_family = st.selectbox("选择 Family（损失曲线）", valid_loss_families, key="loss_sel")
+                lr_show = st.session_state.get("step3_ctx", {}).get("lr", 1e-3)
+                ep_show = st.session_state.get("step3_ctx", {}).get("epochs", len(
+                    next((r.get("loss_curve", []) for r in family_results if r.get("family_name") == loss_family), [])
+                ))
+                loss_res = next((r for r in family_results if r["family_name"] == loss_family), None)
+                if loss_res and loss_res.get("loss_curve"):
+                    fig_loss = plot_loss_curve(loss_res["loss_curve"], lr_show, ep_show)
+                    st.plotly_chart(fig_loss, use_container_width=True)
+            else:
+                st.info("当前结果中暂无损失曲线（仅 standard/ood 模式训练时记录）。")
 
         st.markdown('<hr style="margin:8px 0">', unsafe_allow_html=True)
 
@@ -893,43 +919,57 @@ with tab4:
 
     # ── 历史结果文件加载 ──
     st.markdown("---")
-    st.markdown("#### 📂 加载历史结果文件 (.txt)")
-    st.markdown("支持加载 `few_shot_learning_result*.txt` 或 `baseline_result*.txt` 格式")
-
+    st.markdown("#### 📂 加载历史结果文件 (.txt / .csv)")
+    st.markdown("支持加载 Step 3 导出的 CSV/TXT，或旧版 `few_shot_learning_result*.txt` / `baseline_result*.txt`")
+    
     uploaded_result = st.file_uploader(
-        "上传结果文件", type=["txt"], key="result_upload"
+        "上传结果文件", type=["txt", "csv"], key="result_upload"
     )
     if uploaded_result:
         content = uploaded_result.read().decode("utf-8")
-        lines = content.strip().split("\n")
         st.code(content[-3000:], language="text")
 
-        # 解析关键指标
-        import re
-        err_pattern = re.compile(r"错误率为: ([\d.]+) %")
-        eer_pattern = re.compile(r"EER为: ([\d.]+) %")
-        errors = err_pattern.findall(content)
-        eers_parsed = eer_pattern.findall(content)
+        import pandas as pd
+        parsed = False
 
-        if errors:
-            import pandas as pd
-            n = min(len(errors), len(eers_parsed))
-            df_hist = pd.DataFrame({
-                "Family": [f"family{i+1:05d}" for i in range(n)],
-                "错误率(%)": [float(e) for e in errors[:n]],
-                "EER(%)": [float(e) for e in eers_parsed[:n]],
-            })
-            st.dataframe(df_hist, use_container_width=True, hide_index=True)
+        # 1) 优先按 CSV/TXT 表格解析（兼容逗号/制表符）
+        try:
+            import io
+            df_hist = pd.read_csv(io.StringIO(content), sep=None, engine="python")
+            need_cols = {"Family", "错误率 (%)", "EER (%)"}
+            if need_cols.issubset(set(df_hist.columns)):
+                df_vis = df_hist.rename(columns={"错误率 (%)": "错误率(%)", "EER (%)": "EER(%)"})
+                parsed = True
+        except Exception:
+            pass
 
-            from components.visualization import plot_family_metrics
+        # 2) 回退：旧版 txt 日志格式
+        if not parsed:
+            import re
+            err_pattern = re.compile(r"错误率为: ([\d.]+) %")
+            eer_pattern = re.compile(r"EER为: ([\d.]+) %")
+            errors = err_pattern.findall(content)
+            eers_parsed = eer_pattern.findall(content)
+            if errors:
+                n = min(len(errors), len(eers_parsed))
+                df_vis = pd.DataFrame({
+                    "Family": [f"family{i+1:05d}" for i in range(n)],
+                    "错误率(%)": [float(e) for e in errors[:n]],
+                    "EER(%)": [float(e) for e in eers_parsed[:n]],
+                })
+                parsed = True
+
+        if parsed:
+            st.dataframe(df_vis, use_container_width=True, hide_index=True)
             fig_hist = plot_family_metrics(
                 [{"family_name": r["Family"],
-                  "err_rate": r["错误率(%)"],
-                  "eer": r["EER(%)"] / 100}
-                 for _, r in df_hist.iterrows()]
+                  "err_rate": float(r["错误率(%)"]),
+                  "eer": float(r["EER(%)"]) / 100}
+                 for _, r in df_vis.iterrows()]
             )
             st.plotly_chart(fig_hist, use_container_width=True)
-
+        else:
+            st.warning("未识别的结果文件格式，请上传 Step 3 导出的 CSV/TXT 或旧版结果 txt。")
 
 # ──────────────────────────────────────────────
 # 页脚
