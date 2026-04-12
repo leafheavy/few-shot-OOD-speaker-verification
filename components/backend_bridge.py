@@ -8,6 +8,7 @@ backend_bridge.py — 与用户现有代码的兼容层
 from __future__ import annotations
 
 import sys
+import io
 import importlib
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -443,6 +444,41 @@ def predict_embedding_with_state(
         "confidence": best_score,
         "ood_threshold": ood_threshold,
     }
+
+def import_classifier_state_from_npz(npz_bytes: bytes) -> Dict[str, Any]:
+    """
+    从导出的 npz 字节流中恢复分类器状态。
+    """
+    with np.load(io.BytesIO(npz_bytes), allow_pickle=True) as data:
+        weight = np.asarray(data["weight"], dtype=np.float32)
+        if weight.ndim != 2 or weight.shape[0] == 0 or weight.shape[1] == 0:
+            raise ValueError(f"导入失败：分类器权重 shape 非法: {weight.shape}")
+
+        family_name = str(np.asarray(data.get("family_name", np.array([""]))).reshape(-1)[0])
+        mode = str(np.asarray(data.get("mode", np.array(["standard"]))).reshape(-1)[0])
+
+        label_keys = np.asarray(data.get("label_keys", np.array([], dtype=np.int64))).reshape(-1)
+        label_values = np.asarray(data.get("label_values", np.array([], dtype=object))).reshape(-1)
+        if label_keys.size != label_values.size:
+            raise ValueError("导入失败：label_keys 与 label_values 长度不一致。")
+        label_to_speaker = {int(k): str(v) for k, v in zip(label_keys.tolist(), label_values.tolist())}
+
+        support_labels = np.asarray(data.get("support_labels", np.array([], dtype=np.int64))).reshape(-1)
+        bias_arr = np.asarray(data.get("bias", np.array([], dtype=np.float32))).reshape(-1)
+        bias = np.asarray(bias_arr, dtype=np.float32) if bias_arr.size > 0 else None
+
+        if mode in ("baseline", "baseline_ood") and support_labels.size == 0:
+            raise ValueError("导入失败：baseline 分类器缺少 support_labels。")
+
+        return {
+            "family_name": family_name,
+            "mode": mode,
+            "weight": weight,
+            "support_labels": support_labels,
+            "bias": bias,
+            "use_bias": bias is not None,
+            "label_to_speaker": label_to_speaker,
+        }
 
 # ════════════════════════════════════════════════
 # 嵌入收集（UMAP 可视化辅助）

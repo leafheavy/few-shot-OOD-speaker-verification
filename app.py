@@ -795,11 +795,38 @@ with tab3:
     st.markdown("#### 🎯 指定样本推理：上传单条 embedding 并按 family 分类")
     st.caption("先完成 Step 3 评估，系统会自动缓存每个 family 的分类器参数；也可导出保存。")
 
+    from components.backend_bridge import (
+        predict_embedding_with_state,
+        import_classifier_state_from_npz,
+    )
+
     classifier_cache = st.session_state.get("classifier_cache", {})
+
+    import_col1, import_col2 = st.columns([1.2, 1])
+    with import_col1:
+        uploaded_cls_npz = st.file_uploader(
+            "导入分类器缓存(.npz)",
+            type=["npz"],
+            key="step3_uploaded_classifier_npz",
+            help="可导入此前导出的单个 family 分类器缓存。",
+        )
+    with import_col2:
+        if st.button("📥 导入分类器", use_container_width=True, disabled=uploaded_cls_npz is None):
+            try:
+                imported = import_classifier_state_from_npz(uploaded_cls_npz.getvalue())
+                imported_family = (imported.get("family_name") or "").strip()
+                if not imported_family:
+                    imported_family = f"imported_{time.strftime('%H%M%S')}"
+                imported["family_name"] = imported_family
+                classifier_cache[imported_family] = imported
+                st.session_state["classifier_cache"] = classifier_cache
+                st.success(f"导入成功 ✅ family={imported_family}")
+            except Exception as e:
+                st.error(f"导入失败: {e}")
+    
     if not classifier_cache:
-        st.info("暂无可用分类器缓存。请先运行上方“开始评估”至少处理 1 个 family。")
+        st.info("暂无可用分类器缓存。可先导入 .npz 或先运行上方“开始评估”至少处理 1 个 family。")
     else:
-        from components.backend_bridge import predict_embedding_with_state
 
         fam_col, file_col = st.columns([1, 1.4])
         with fam_col:
