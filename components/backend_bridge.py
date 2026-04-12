@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 import importlib
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -341,6 +341,108 @@ class FewShotRunner:
 
         return result
 
+    def export_classifier_state(self, support_loader, family_name: Optional[str] = None) -> Dict[str, Any]:
+        """
+        导出当前 family 训练后的分类器状态，便于缓存与后续单样本推理。
+        """
+        if not _TORCH_AVAILABLE:
+            raise RuntimeError("PyTorch 未安装，无法导出分类器状态。")
+
+        if self._model is None:
+            raise RuntimeError("模型未初始化，无法导出分类器状态。")
+
+        dataset = getattr(support_loader, "dataset", None)
+        speaker_to_label = getattr(dataset, "speaker_to_label", {}) if dataset is not None else {}
+        label_to_speaker = {int(v): str(k) for k, v in speaker_to_label.items()}
+
+        state: Dict[str, Any] = {
+            "family_name": family_name or "",
+            "mode": self.mode,
+            "label_to_speaker": label_to_speaker,
+        }
+
+        m = self._model
+        if self.mode in ("baseline", "baseline_ood"):
+            if getattr(m, "W", None) is None or getattr(m, "support_labels", None) is None:
+                raise RuntimeError("baseline 分类器状态为空，请先完成 family 训练/构建。")
+            state.update({
+                "weight": m.W.detach().cpu().numpy(),
+                "support_labels": m.support_labels.detach().cpu().numpy(),
+                "use_bias": False,
+            })
+        else:
+            weight = None
+            bias = None
+            if getattr(m, "classifier", None) is not None:
+                weight = m.classifier.weight.detach().cpu().numpy()
+                bias = m.classifier.bias.detach().cpu().numpy()
+            elif getattr(m, "W", None) is not None:
+                weight = m.W.detach().cpu().numpy()
+                b = getattr(m, "b", None)
+                if b is not None:
+                    bias = b.detach().cpu().numpy() if hasattr(b, "detach") else np.asarray(b, dtype=np.float32)
+
+            if weight is None:
+                raise RuntimeError("few-shot 分类器状态为空，请先完成 family 训练。")
+
+            state.update({
+                "weight": np.asarray(weight, dtype=np.float32),
+                "bias": np.asarray(bias, dtype=np.float32) if bias is not None else None,
+                "use_bias": bias is not None,
+            })
+
+        return state
+
+
+def predict_embedding_with_state(
+    embedding: np.ndarray,
+    classifier_state: Dict[str, Any],
+    ood_threshold: float = 0.4,
+) -> Dict[str, Any]:
+    """
+    使用导出的分类器状态对单条 embedding 进行预测。
+    """
+    vec = np.asarray(embedding, dtype=np.float32).reshape(-1)
+    w = np.asarray(classifier_state["weight"], dtype=np.float32)
+    if w.ndim != 2:
+        raise ValueError(f"分类器权重维度非法: {w.shape}")
+    if vec.shape[0] != w.shape[1]:
+        raise ValueError(f"embedding 维度({vec.shape[0]})与分类器维度({w.shape[1]})不匹配")
+
+    vec_norm = vec / max(np.linalg.norm(vec), 1e-12)
+    mode = classifier_state.get("mode", "standard")
+    use_bias = bool(classifier_state.get("use_bias", False))
+
+    if mode in ("baseline", "baseline_ood"):
+        scores = np.dot(w, vec_norm)  # [num_support]
+        support_labels = np.asarray(classifier_state.get("support_labels"))
+        if support_labels.size == 0:
+            raise ValueError("baseline 分类器缺少 support_labels。")
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        pred_label = int(support_labels[best_idx])
+    else:
+        logits = np.dot(w, vec_norm)  # [num_classes]
+        if use_bias and classifier_state.get("bias") is not None:
+            logits = logits + np.asarray(classifier_state["bias"], dtype=np.float32)
+        best_idx = int(np.argmax(logits))
+        best_score = float(logits[best_idx])
+        pred_label = best_idx
+
+    if mode in ("baseline_ood", "ood") and best_score < ood_threshold:
+        pred_label = -1
+
+    label_to_speaker = classifier_state.get("label_to_speaker", {}) or {}
+    pred_speaker = "OOD/未知" if pred_label < 0 else label_to_speaker.get(pred_label, f"label_{pred_label}")
+
+    return {
+        "family_name": classifier_state.get("family_name", ""),
+        "mode": mode,
+        "pred_label": pred_label,
+        "pred_speaker_id": pred_speaker,
+        "confidence": best_score,
+        "ood_threshold": ood_threshold,
+    }
 
 # ════════════════════════════════════════════════
 # 嵌入收集（UMAP 可视化辅助）

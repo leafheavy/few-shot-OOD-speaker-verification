@@ -15,6 +15,7 @@ python -m streamlit run app.py
 
 import sys
 import os
+import io
 import json
 import time
 import threading
@@ -84,6 +85,7 @@ def _init():
         "step3_progress":   0.0,
         "step3_stop_requested": False,
         "step3_ctx":        None,
+        "classifier_cache": {},
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -629,6 +631,11 @@ with tab3:
             if not valid_family_names:
                 st.error("未找到可评估的 family（缺少 support/test loader）")
                 st.stop()
+            st.caption(
+                f"本次将按排序顺序评估前 {len(valid_family_names)} 个 family："
+                f"{', '.join(valid_family_names[:5])}"
+                + (" ..." if len(valid_family_names) > 5 else "")
+            )
 
             st.session_state["step3_ctx"] = {
                 "mode": mode,
@@ -641,12 +648,14 @@ with tab3:
                 "families": valid_family_names,
                 "idx": 0,
                 "family_results": [],
+                "classifier_cache": {},
             }
             st.session_state["step3_running"] = True
             st.session_state["step3_stop_requested"] = False
             st.session_state["family_results"] = []
             st.session_state["summary"] = {}
             st.session_state["result_mode"] = mode
+            st.session_state["classifier_cache"] = {}
             st.rerun()
 
         if st.session_state.get("step3_running", False):
@@ -679,6 +688,10 @@ with tab3:
                         )
                         res["family_name"] = fname
                         ctx["family_results"].append(res)
+                        cls_state = ctx["runner"].export_classifier_state(
+                            ctx["support_loaders"][fname], family_name=fname
+                        )
+                        ctx["classifier_cache"][fname] = cls_state
                     except Exception as e:
                         ctx["family_results"].append({
                             "family_name": fname, "error": str(e),
@@ -689,6 +702,7 @@ with tab3:
                     ctx["idx"] = idx + 1
                     st.session_state["step3_ctx"] = ctx
                     st.session_state["family_results"] = ctx["family_results"]
+                    st.session_state["classifier_cache"] = ctx.get("classifier_cache", {})
                     st.session_state["summary"] = aggregate_family_results(ctx["family_results"])
 
                     tmp_summary = st.session_state["summary"]
@@ -775,6 +789,84 @@ with tab3:
                 file_name=f"sv_results_{cur_mode}_{time.strftime('%Y%m%d_%H%M%S')}.txt",
                 mime="text/plain",
             )
+
+    # ── 单条 embedding 推理（基于 Step 3 训练后缓存） ──
+    st.markdown("---")
+    st.markdown("#### 🎯 指定样本推理：上传单条 embedding 并按 family 分类")
+    st.caption("先完成 Step 3 评估，系统会自动缓存每个 family 的分类器参数；也可导出保存。")
+
+    classifier_cache = st.session_state.get("classifier_cache", {})
+    if not classifier_cache:
+        st.info("暂无可用分类器缓存。请先运行上方“开始评估”至少处理 1 个 family。")
+    else:
+        from components.backend_bridge import predict_embedding_with_state
+
+        fam_col, file_col = st.columns([1, 1.4])
+        with fam_col:
+            selected_family = st.selectbox(
+                "选择 family 分类器",
+                options=sorted(classifier_cache.keys()),
+                key="step3_predict_family",
+            )
+            infer_threshold = st.slider(
+                "推理 OOD 阈值（仅 OOD 模式生效）",
+                min_value=0.1, max_value=0.9, value=float(ood_threshold), step=0.05,
+            )
+        with file_col:
+            uploaded_npy = st.file_uploader(
+                "上传 embedding (.npy)",
+                type=["npy"],
+                key="step3_uploaded_embedding",
+                help="支持 shape=(D,) 或 (1,D) 的 numpy 向量。",
+            )
+
+        act_col1, act_col2 = st.columns([1, 1])
+        with act_col1:
+            if st.button("🔍 执行单条分类", use_container_width=True, disabled=uploaded_npy is None):
+                try:
+                    emb = np.load(uploaded_npy)
+                    if emb.ndim == 2 and emb.shape[0] == 1:
+                        emb = emb[0]
+                    pred = predict_embedding_with_state(
+                        emb, classifier_cache[selected_family], ood_threshold=infer_threshold
+                    )
+                    st.success("分类完成 ✅")
+                    m1, m2, m3 = st.columns(3)
+                    m1.markdown("**Family**")
+                    m1.code(str(pred["family_name"] or selected_family))
+                    m2.metric("预测类别", str(pred["pred_label"]))
+                    m3.metric("预测 speaker_id", str(pred["pred_speaker_id"]))
+                    st.caption(f"置信度/相似度: {pred['confidence']:.4f}")
+                    if pred["pred_label"] < 0:
+                        st.warning("该 embedding 被判定为 OOD/未知类别。")
+                except Exception as e:
+                    st.error(f"分类失败: {e}")
+
+        with act_col2:
+            if st.button("💾 导出所选 family 分类器", use_container_width=True):
+                try:
+                    stt = classifier_cache[selected_family]
+                    buff = io.BytesIO()
+                    np.savez_compressed(
+                        buff,
+                        family_name=np.array([stt.get("family_name", selected_family)]),
+                        mode=np.array([stt.get("mode", "standard")]),
+                        weight=np.asarray(stt["weight"], dtype=np.float32),
+                        support_labels=np.asarray(stt.get("support_labels", np.array([], dtype=np.int64))),
+                        bias=np.asarray(stt.get("bias", np.array([], dtype=np.float32)))
+                        if stt.get("bias") is not None else np.array([], dtype=np.float32),
+                        label_keys=np.asarray(list(stt.get("label_to_speaker", {}).keys()), dtype=np.int64),
+                        label_values=np.asarray(list(stt.get("label_to_speaker", {}).values()), dtype=object),
+                    )
+                    st.download_button(
+                        "⬇️ 下载分类器缓存(.npz)",
+                        data=buff.getvalue(),
+                        file_name=f"classifier_{selected_family}_{time.strftime('%Y%m%d_%H%M%S')}.npz",
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                    )
+                except Exception as e:
+                    st.error(f"导出失败: {e}")
 
 # ══════════════════════════════════════════════════════════════
 # TAB 4 · 结果可视化
