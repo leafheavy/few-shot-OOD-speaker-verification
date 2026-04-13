@@ -104,7 +104,7 @@ class FewShotLearning:
             prototypes.append(class_prototype)
         
         prototypes_tensor = torch.stack(prototypes)  # 将原型列表堆叠成张量
-        self.W = F.normalize(prototypes_tensor, p=2, dim=1)
+        self.W = F.normalize(prototypes_tensor, p=2, dim=1).to(self.device)
 
         self.b = torch.zeros(self.num_classes, device=self.device)
 

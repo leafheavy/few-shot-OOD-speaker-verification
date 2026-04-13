@@ -224,18 +224,17 @@ class FewShotLearning:
         # all_logits_tensor = torch.cat(all_logits, dim=0)
         # predictions = torch.cat(all_pred_labels, dim=0)
                 # 将数据移回CPU用于后续处理
-                all_test_embeddings.append(embeddings.cpu())
-                all_true_labels.append(labels.cpu())
+                all_test_embeddings.append(embeddings)
+                all_true_labels.append(labels)
                 all_test_speaker_ids.extend(speaker_ids)
-                all_pred_labels.append(predicted_labels.cpu())
-                all_logits.append(logits.cpu())
+                all_pred_labels.append(predicted_labels)
+                all_logits.append(logits)
         
         # 在CPU上处理结果
         X_test = torch.cat(all_test_embeddings, dim=0)
         X_test_normalized = F.normalize(X_test, p=2, dim=1)
         # 将W矩阵移到CPU用于计算相似度
-        W_cpu = self.W.cpu()
-        similarity_matrix = torch.mm(X_test_normalized, W_cpu.t())
+        similarity_matrix = torch.mm(X_test_normalized, self.W.t())
 
         true_labels = torch.cat(all_true_labels, dim=0)
         all_logits_tensor = torch.cat(all_logits, dim=0)
