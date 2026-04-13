@@ -206,6 +206,21 @@ class FewShotRunner:
 
     def is_available(self) -> bool:
         return self._model is not None
+    
+    def get_device(self) -> str:
+        """
+        返回当前运行设备（用于前端展示）。
+        优先读取模型自身 device 属性；否则根据 torch 环境推断。
+        """
+        if self._model is not None and hasattr(self._model, "device"):
+            try:
+                return str(getattr(self._model, "device"))
+            except Exception:
+                pass
+
+        if _TORCH_AVAILABLE:
+            return "cuda" if torch.cuda.is_available() else "cpu"
+        return "unknown"
 
     # ── 核心评估函数 ────────────────────────────
 

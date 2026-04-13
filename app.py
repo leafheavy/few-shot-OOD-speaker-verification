@@ -623,6 +623,8 @@ with tab3:
             if not runner.is_available():
                 st.error("模型类未能初始化，请检查模块是否正确加载")
                 st.stop()
+            current_device = runner.get_device()
+            st.info(f"🖥️ 当前运行设备: `{current_device}`")
 
             valid_family_names = [
                 f.name for f in families
@@ -645,6 +647,7 @@ with tab3:
                 "support_loaders": support_loaders,
                 "test_loaders": test_loaders,
                 "runner": runner,
+                "device": current_device,
                 "families": valid_family_names,
                 "idx": 0,
                 "family_results": [],
@@ -666,6 +669,8 @@ with tab3:
                 st.session_state["step3_stop_requested"] = True
 
             ctx = st.session_state.get("step3_ctx") or {}
+            if ctx.get("device"):
+                st.caption(f"当前运行设备: `{ctx['device']}`")
             families = ctx.get("families", [])
             total = len(families)
             idx = int(ctx.get("idx", 0))

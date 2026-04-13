@@ -40,13 +40,18 @@ class CosineClassifier(nn.Module):
         return output
 
 class FewShotLearning:
-    def __init__(self):
+    def __init__(self, device=None):
         """
         小样本学习器
         
         Args:
             
         """
+        selected_device = device
+        if selected_device is None:
+            selected_device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(selected_device)
+
         self.classifier = None
         self.W = None  # 支撑集嵌入矩阵 [num_support, embedding_dim]
         self.b = None # 偏置项
@@ -76,8 +81,8 @@ class FewShotLearning:
             for batch in support_loader:
                 embeddings, labels, speaker_ids, _ = batch
                 # print(f"Batch embeddings shape: {embeddings.shape}")  # 添加此行：检查每个batch的嵌入形状
-                all_embeddings.append(embeddings)
-                all_labels.append(labels)
+                all_embeddings.append(embeddings.to(self.device))
+                all_labels.append(labels.to(self.device))
                 all_speaker_ids.extend(speaker_ids)
         
         self.support_labels = torch.cat(all_labels, dim=0)
@@ -101,7 +106,7 @@ class FewShotLearning:
         prototypes_tensor = torch.stack(prototypes)  # 将原型列表堆叠成张量
         self.W = F.normalize(prototypes_tensor, p=2, dim=1)
 
-        self.b = torch.zeros(self.num_classes)  # 动态初始化偏置项
+        self.b = torch.zeros(self.num_classes, device=self.device)
 
         self.support_speaker_ids = all_speaker_ids
         
@@ -113,7 +118,7 @@ class FewShotLearning:
         if self.W is None:
             raise ValueError("必须先调用 initialization() 方法构建W矩阵")
 
-        self.classifier = CosineClassifier(self.W, self.b)
+        self.classifier = CosineClassifier(self.W, self.b).to(self.device)
         optimizer = torch.optim.Adam(self.classifier.parameters(), lr=lr)
         criterion = nn.CrossEntropyLoss()
 
@@ -124,6 +129,8 @@ class FewShotLearning:
             epoch_loss = 0.0
             for batch in support_loader:
                 embeddings, labels, speaker_ids, _ = batch
+                embeddings = embeddings.to(self.device)
+                labels = labels.to(self.device)
                 
                 optimizer.zero_grad()
 
@@ -170,6 +177,8 @@ class FewShotLearning:
         with torch.no_grad():
             for batch in test_loader:
                 embeddings, labels, speaker_ids, _ = batch
+                embeddings = embeddings.to(self.device)
+                labels = labels.to(self.device)
 
                 outputs = self.classifier(embeddings)
                 predicted_labels = torch.argmax(outputs, dim=1)

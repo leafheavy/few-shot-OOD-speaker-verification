@@ -255,7 +255,7 @@ class FewShotLearning:
         }
 
 if __name__ == "__main__":
-    device = 'cuda:1' if torch.cuda.device_count() > 0 else 'cpu'
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     for ood_threshold in [0.3, 0.4, 0.5, 0.6, 0.65]:
         with open(f"voxceleb_result/5shot3way_3/few_shot_learning_OOD_cosface_{ood_threshold}.txt", "w") as f:
