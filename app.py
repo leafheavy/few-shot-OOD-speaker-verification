@@ -548,7 +548,7 @@ with tab3:
             ood_threshold = 0.4
 
         st.markdown("---")
-        batch_size = st.select_slider("Batch Size", options=[4, 8, 16, 32], value=8)
+        batch_size = st.select_slider("Batch Size", options=[4, 8, 16, 32, 64, 128, 256], value=8)
         preload = st.checkbox("预加载 embedding 到内存", value=True)
 
         # 数据集范围
