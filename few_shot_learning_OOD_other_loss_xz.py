@@ -444,8 +444,8 @@ if __name__ == "__main__":
 
                 # ===== OOD检测评估 =====
                 # 使用最大相似度作为置信度
-                confidence_scores = torch.max(similarity_matrix, dim=1)[0].numpy()
-                ood_labels = (true_labels >= 0).int().numpy()  # 1=in-domain, 0=OOD
+                confidence_scores = torch.max(similarity_matrix, dim=1)[0].detach().cpu().numpy()
+                ood_labels = (true_labels >= 0).int().detach().cpu().numpy()  # 1=in-domain, 0=OOD
                 
                 # 计算OOD指标
                 if len(np.unique(ood_labels)) > 1:  # 确保有in-domain和OOD样本

@@ -66,6 +66,13 @@ def _inject_calculate_eer_shim(directory: str) -> None:
     )
     target.write_text(shim, encoding="utf-8")
 
+def _to_numpy(value: Any) -> Optional[np.ndarray]:
+    """安全地把 tensor/array-like 转为 numpy；None 原样返回。"""
+    if value is None:
+        return None
+    if hasattr(value, "detach"):
+        return value.detach().cpu().numpy()
+    return np.asarray(value)
 
 # ════════════════════════════════════════════════
 # 核心公开函数：导入用户模块
@@ -335,16 +342,18 @@ class FewShotRunner:
         # 6. OOD 指标
         if self.mode in ("ood", "baseline_ood"):
             ood_mask     = ~id_mask
-            confidence   = torch.max(sim_mat, dim=1)[0].detach().numpy()
-            ood_label_np = id_mask.numpy().astype(int)
+            confidence   = torch.max(sim_mat, dim=1)[0].detach().cpu().numpy()
+            ood_label_np = id_mask.detach().cpu().numpy().astype(int)
 
             if torch.any(ood_mask):
                 ood_m = calculate_ood_metrics(confidence, ood_label_np)
 
-                id_conf = confidence[id_mask.numpy()]
+                id_mask_np = id_mask.detach().cpu().numpy()
+                id_conf = confidence[id_mask_np]
                 id_fr   = int(np.sum(id_conf < ood_threshold))
 
-                ood_conf     = confidence[ood_mask.numpy()]
+                ood_mask_np  = ood_mask.detach().cpu().numpy()
+                ood_conf     = confidence[ood_mask_np]
                 ood_err_num  = int(np.sum(ood_conf >= ood_threshold))
                 ood_test_num = int(ood_mask.sum())
 
@@ -382,21 +391,21 @@ class FewShotRunner:
             if getattr(m, "W", None) is None or getattr(m, "support_labels", None) is None:
                 raise RuntimeError("baseline 分类器状态为空，请先完成 family 训练/构建。")
             state.update({
-                "weight": m.W.detach().cpu().numpy(),
-                "support_labels": m.support_labels.detach().cpu().numpy(),
+                "weight": _to_numpy(m.W),
+                "support_labels": _to_numpy(m.support_labels),
                 "use_bias": False,
             })
         else:
             weight = None
             bias = None
             if getattr(m, "classifier", None) is not None:
-                weight = m.classifier.weight.detach().cpu().numpy()
-                bias = m.classifier.bias.detach().cpu().numpy()
+                weight = _to_numpy(m.classifier.weight)
+                bias = _to_numpy(getattr(m.classifier, "bias", None))
             elif getattr(m, "W", None) is not None:
-                weight = m.W.detach().cpu().numpy()
+                weight = _to_numpy(m.W)
                 b = getattr(m, "b", None)
                 if b is not None:
-                    bias = b.detach().cpu().numpy() if hasattr(b, "detach") else np.asarray(b, dtype=np.float32)
+                    bias = _to_numpy(b)
 
             if weight is None:
                 raise RuntimeError("few-shot 分类器状态为空，请先完成 family 训练。")
@@ -503,6 +512,6 @@ def collect_embeddings_from_loader(loader) -> Tuple[np.ndarray, np.ndarray]:
     """从 DataLoader 收集全部嵌入向量和标签，返回 numpy 数组。"""
     all_embs, all_labels = [], []
     for embs, labels, _, _ in loader:
-        all_embs.append(embs.numpy())
-        all_labels.append(labels.numpy())
+        all_embs.append(embs.detach().cpu().numpy() if hasattr(embs, "detach") else np.asarray(embs))
+        all_labels.append(labels.detach().cpu().numpy() if hasattr(labels, "detach") else np.asarray(labels))
     return np.vstack(all_embs), np.concatenate(all_labels)
